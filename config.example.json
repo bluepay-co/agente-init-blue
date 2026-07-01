@@ -39,7 +39,7 @@
     {
       "nome": "Adobe Acrobat Reader",
       "metodo": "local",
-      "filename": "Reader_br_install.exe",
+      "filename": "reader_br_R9BVLF8K_install.exe",
       "args": "",
       "ok_codes": [0, 3010],
       "detect": "C:\\Program Files\\Adobe\\Acrobat DC\\Acrobat\\Acrobat.exe"
