@@ -1134,13 +1134,12 @@ def _etapa_otimizacao() -> bool:
     #     menus, controles, listas etc. (é o que o Windows grava nesse modo)
     #   • MinAnimate=0       → animação de minimizar/maximizar janela
     #   • TaskbarAnimations=0→ animações da barra de tarefas
-    #   • DragFullWindows=0  → não desenhar conteúdo da janela ao arrastar
     #   • ListviewAlphaSelect / ListviewShadow=0 → seleção translúcida e sombras
     _run_cmd(f'reg add "{visualfx}" /v VisualFXSetting /t REG_DWORD /d 2 /f', label="Efeitos visuais: melhor desempenho")
     _run_cmd(f'reg add "{desktop}" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f', label="Efeitos de animação: OFF (máscara)")
     _run_cmd(f'reg add "{winmetrics}" /v MinAnimate /t REG_SZ /d 0 /f', label="Animação de janela: OFF")
     _run_cmd(f'reg add "{advanced}" /v TaskbarAnimations /t REG_DWORD /d 0 /f', label="Animações da barra de tarefas: OFF")
-    _run_cmd(f'reg add "{desktop}" /v DragFullWindows /t REG_SZ /d 0 /f', label="Conteúdo ao arrastar: OFF")
+
     _run_cmd(f'reg add "{advanced}" /v ListviewAlphaSelect /t REG_DWORD /d 0 /f', label="Seleção translúcida: OFF")
     _run_cmd(f'reg add "{advanced}" /v ListviewShadow /t REG_DWORD /d 0 /f', label="Sombras de ícones: OFF")
 
