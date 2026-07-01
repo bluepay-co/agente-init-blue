@@ -3,7 +3,7 @@
 //  SSE + fetch — puro JavaScript, sem dependências
 // ============================================
 
-const ETAPAS = ['downloads', 'wallpaper', 'rede', 'smb', 'usuarios', 'impressora', 'otimizacao', 'integridade'];
+const ETAPAS = ['downloads', 'wallpaper', 'rede', 'smb', 'usuarios', 'otimizacao', 'integridade'];
 let _eventSource = null;
 let _swTotal = 7;   // AnyDesk + Chrome + Adobe + Office + WinRAR + Google Drive + Slack
 let _swDone  = 0;
@@ -24,17 +24,8 @@ function setProgress(pct, text, finalOk) {
   l.style.color = finalOk ? 'var(--green)' : '';
 }
 
-function appendLog(msg, tipo) {
-  const box  = document.getElementById('logBox');
-  if (!box || msg == null) return;
-  // Remove placeholder na primeira mensagem real
-  const ph = box.querySelector('.log-placeholder');
-  if (ph) ph.remove();
-  const line = document.createElement('span');
-  line.className   = 'log-line ' + (tipo || 'muted');
-  line.textContent = msg;
-  box.appendChild(line);
-  box.scrollTop = box.scrollHeight;
+function appendLog(_msg, _tipo) {
+  // log box removido da interface
 }
 
 function setStepState(etapa, state, badgeText) {
@@ -157,8 +148,6 @@ function iniciarAgente() {
   const btn = document.getElementById('btnExecutar');
 
   // Reset visual
-  document.getElementById('logBox').innerHTML =
-    '<span class="log-placeholder">Os logs de execução aparecerão aqui.</span>';
   const bar = document.getElementById('progressBar');
   bar.style.width = '0%';
   bar.className   = 'progress-bar';
@@ -218,7 +207,6 @@ function iniciarAgente() {
           instalar_softwares: document.getElementById('chkSoftwares').checked,
           softwares_selecionados: selectedSW,
           otimizacao: document.getElementById('chkOtimizacao').checked,
-          instalar_impressora: document.getElementById('chkImpressora').checked,
           verificar_integridade: document.getElementById('chkIntegridade').checked
         })
       }).catch(() => appendLog('[!] Falha ao contactar o servidor Python.', 'err'));
@@ -313,11 +301,6 @@ document.getElementById('chkOtimizacao').addEventListener('change', (e) => {
   } else {
     step.style.opacity = '0.4';
   }
-});
-
-document.getElementById('chkImpressora').addEventListener('change', (e) => {
-  const step = document.getElementById('step-impressora');
-  step.style.opacity = e.target.checked ? '1' : '0.4';
 });
 
 document.getElementById('chkIntegridade').addEventListener('change', (e) => {

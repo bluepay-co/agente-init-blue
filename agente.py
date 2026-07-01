@@ -99,11 +99,6 @@ _ADMIN_PASS: str = _admin_cfg.get("senha", "")
 USUARIOS: List[dict] = _CONFIG.get("usuarios", [])
 
 # ─────────────────────────────────────────────
-#  IMPRESSORA DE REDE (de config.json)
-# ─────────────────────────────────────────────
-IMPRESSORA: dict = _CONFIG.get("impressora", {})
-
-# ─────────────────────────────────────────────
 #  VERIFICAÇÃO DE INTEGRIDADE (de config.json)
 # ─────────────────────────────────────────────
 INTEGRIDADE: dict = _CONFIG.get("integridade", {"habilitar": True})
@@ -231,12 +226,11 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             instalar = params.get("instalar_softwares", True)
             otimizar = params.get("otimizacao", True)
             sw_lista = params.get("softwares_selecionados", [])
-            impressora = params.get("instalar_impressora", True)
             integridade = params.get("verificar_integridade", True)
 
             threading.Thread(
                 target=run_automation,
-                args=(instalar, otimizar, sw_lista, impressora, integridade),
+                args=(instalar, otimizar, sw_lista, integridade),
                 daemon=True,
             ).start()
             self._json_response({"ok": True})
@@ -1246,85 +1240,6 @@ def _etapa_otimizacao() -> bool:
     return True
 
 
-def _etapa_impressora() -> bool:
-    """Instala uma impressora de rede por IP direto (porta TCP/IP).
-    Configuração vem de IMPRESSORA (config.json). O driver é obtido via
-    Windows Update / catálogo nativo do Windows no momento da instalação.
-    Usa cmdlets do módulo PrintManagement (Add-PrinterPort/Add-Printer)."""
-    _etapa_inicio("impressora", 74)
-
-    if not IMPRESSORA or not IMPRESSORA.get("habilitar"):
-        _log("  Impressora desabilitada na configuração. Pulando...", "muted")
-        _etapa_fim("impressora", True, 80)
-        return True
-
-    nome = IMPRESSORA.get("nome", "Impressora de Rede")
-    ip = (IMPRESSORA.get("ip") or "").strip()
-    padrao = bool(IMPRESSORA.get("padrao"))
-
-    if not ip:
-        _log("  ⚠  IP da impressora não informado no config.json. Pulando...", "warn")
-        _etapa_fim("impressora", False, 80)
-        return False
-
-    porta = f"IP_{ip}"
-    _log(f"\n  🖨  Instalando impressora '{nome}' em {ip}...", "info")
-
-    # Garante o serviço de Spooler ativo (no Sandbox costuma vir parado/manual).
-    _run_cmd("sc config Spooler start= auto", label="Spooler → automático")
-    _run_cmd("net start Spooler", label="Iniciar Spooler")
-
-    def _esc(s: str) -> str:
-        return s.replace("'", "''")
-
-    # PowerShell idempotente:
-    #  1. cria a porta TCP/IP se não existir
-    #  2. tenta resolver o driver pelo nome; se não houver, dispara a busca do
-    #     Windows Update (RICOH) e tenta de novo
-    #  3. cria a impressora (ou atualiza a porta se já existir)
-    #  4. opcionalmente define como padrão
-    ps = (
-        "$ErrorActionPreference = 'Stop'; "
-        f"$nome = '{_esc(nome)}'; $ip = '{_esc(ip)}'; $porta = '{_esc(porta)}'; "
-        # Porta TCP/IP
-        "if (-not (Get-PrinterPort -Name $porta -ErrorAction SilentlyContinue)) { "
-        "  Add-PrinterPort -Name $porta -PrinterHostAddress $ip; "
-        "  Write-Host \"  [+] Porta TCP/IP criada: $porta\" "
-        "} else { Write-Host \"  [=] Porta ja existe: $porta\" }; "
-        # Driver: usa o do sistema; se ausente, força varredura do Windows Update
-        "$drv = Get-PrinterDriver -Name $nome -ErrorAction SilentlyContinue; "
-        "if (-not $drv) { "
-        "  Write-Host '  [i] Driver nao encontrado localmente. Buscando no Windows Update...'; "
-        "  try { Add-PrinterDriver -Name $nome -ErrorAction Stop; "
-        "        $drv = Get-PrinterDriver -Name $nome -ErrorAction SilentlyContinue } catch {} "
-        "}; "
-        "if (-not $drv) { "
-        "  Write-Host '  [!] Driver da impressora nao disponivel. Instale o driver RICOH e rode novamente.'; "
-        "  exit 2 "
-        "}; "
-        # Impressora
-        "if (Get-Printer -Name $nome -ErrorAction SilentlyContinue) { "
-        "  Set-Printer -Name $nome -PortName $porta; "
-        "  Write-Host \"  [*] Impressora atualizada: $nome\" "
-        "} else { "
-        "  Add-Printer -Name $nome -DriverName $nome -PortName $porta; "
-        "  Write-Host \"  [*] Impressora instalada: $nome\" "
-        "}; "
-        + (
-            "$p=New-Object -ComObject WScript.Network; "
-            "$p.SetDefaultPrinter($nome); "
-            "Write-Host \"  [*] Definida como padrao: $nome\"; "
-            if padrao else ""
-        )
-    )
-
-    cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "{ps}"'
-    ok = _run_cmd(cmd, label=f"Instalar impressora {nome}", timeout=300)
-
-    _etapa_fim("impressora", ok, 80)
-    return ok
-
-
 def _etapa_integridade() -> bool:
     """Verificação de integridade do sistema, executada ao final do setup.
 
@@ -1372,8 +1287,7 @@ def _etapa_integridade() -> bool:
 # ══════════════════════════════════════════════
 
 def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
-                   sw_lista: list = None, instalar_impressora: bool = True,
-                   verificar_integridade: bool = True):
+                   sw_lista: list = None, verificar_integridade: bool = True):
     inicio = datetime.now()
     erros: List[str] = []
 
@@ -1401,15 +1315,6 @@ def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
     # Criação de usuários locais (sempre executada)
     if not _etapa_usuarios():
         erros.append("usuarios")
-
-    # Impressora de rede (Opcional)
-    if instalar_impressora:
-        if not _etapa_impressora():
-            erros.append("impressora")
-    else:
-        _log("\n  [INFO] Pulando etapa de impressora.", "info")
-        _etapa_inicio("impressora", 74)
-        _etapa_fim("impressora", True, 80)
 
     # Otimização (Opcional)
     if otimizacao:
