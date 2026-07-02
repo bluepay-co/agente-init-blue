@@ -350,7 +350,9 @@ def _renomear_no_boot(sid: str, novo_nome: str, nome_atual: str) -> dict:
 
     subprocess.run(f"schtasks /delete /tn {_TASK_RENAME} /f",
                    shell=True, capture_output=True, creationflags=_NO_WINDOW)
-    tr = f'powershell -NoProfile -ExecutionPolicy Bypass -File \\"{boot_script}\\"'
+    # O caminho fica em ProgramData\AgenteBlue (sem espaços), então dispensamos
+    # aspas internas — que são problemáticas de escapar no /tr do schtasks.
+    tr = f"powershell -NoProfile -ExecutionPolicy Bypass -File {boot_script}"
     criar_task = (f'schtasks /create /tn {_TASK_RENAME} /tr "{tr}" '
                   f'/sc ONSTART /ru SYSTEM /rl highest /f')
     r = subprocess.run(criar_task, shell=True, capture_output=True, text=True,
