@@ -5,20 +5,20 @@
 //  JavaScript puro, sem dependências.
 // ============================================
 
-// ── Navegação entre as views (Setup / Usuários) ──────────────────────────────
+// ── Navegação entre as views (Setup / Usuários / Programas) ──────────────────
 function showView(view) {
-  const main  = document.getElementById('viewMain');
-  const users = document.getElementById('viewUsers');
-  const tSetup = document.getElementById('tab-setup');
-  const tUsers = document.getElementById('tab-users');
+  const views = { main: 'viewMain', users: 'viewUsers', programs: 'viewPrograms' };
+  const tabs  = { main: 'tab-setup', users: 'tab-users', programs: 'tab-programs' };
 
-  const isUsers = view === 'users';
-  main.style.display  = isUsers ? 'none' : 'flex';
-  users.style.display = isUsers ? 'flex' : 'none';
-  tSetup.classList.toggle('active', !isUsers);
-  tUsers.classList.toggle('active', isUsers);
+  Object.keys(views).forEach(k => {
+    const el = document.getElementById(views[k]);
+    if (el) el.style.display = (k === view) ? 'flex' : 'none';
+    const t = document.getElementById(tabs[k]);
+    if (t) t.classList.toggle('active', k === view);
+  });
 
-  if (isUsers) carregarUsuarios();
+  if (view === 'users') carregarUsuarios();
+  if (view === 'programs' && typeof carregarProgramas === 'function') carregarProgramas();
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

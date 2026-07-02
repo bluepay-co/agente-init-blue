@@ -27,7 +27,8 @@
       <!-- Navegação entre Setup e Gerenciar Usuários -->
       <div class="nav-tabs">
         <button class="nav-tab active" id="tab-setup" onclick="showView('main')">⚙ Setup</button>
-        <button class="nav-tab" id="tab-users" onclick="showView('users')">👥 Gerenciar Usuários</button>
+        <button class="nav-tab" id="tab-users" onclick="showView('users')">👥 Usuários</button>
+        <button class="nav-tab" id="tab-programs" onclick="showView('programs')">🗑 Programas</button>
       </div>
 
       <!-- ══════════ VIEW: SETUP ══════════ -->
@@ -284,11 +285,43 @@
 
       </div><!-- /viewUsers -->
 
+      <!-- ══════════ VIEW: DESINSTALAR PROGRAMAS ══════════ -->
+      <div id="viewPrograms" style="display:none;">
+
+        <div class="card">
+          <input id="prog-search" class="u-input" placeholder="🔎 Filtrar por nome ou fabricante…" oninput="filtrarProgramas()" autocomplete="off">
+          <div class="prog-actions">
+            <label class="u-role">
+              <input type="checkbox" id="prog-all" onchange="marcarTodos(this.checked)">
+              <span>Selecionar todos (visíveis)</span>
+            </label>
+            <span class="prog-count" id="prog-count">0 selecionados</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="user-list-head">
+            <p class="card-label" style="margin:0;">Programas Instalados</p>
+            <button class="btn-refresh" onclick="carregarProgramas()" title="Atualizar lista">↻</button>
+          </div>
+          <div id="prog-list" class="prog-list">
+            <p class="u-loading">Carregando…</p>
+          </div>
+        </div>
+
+        <button class="btn-executar btn-uninstall" id="btnDesinstalar" onclick="desinstalarSelecionados()" disabled>
+          🗑 &nbsp;DESINSTALAR SELECIONADOS
+        </button>
+        <p class="u-msg" id="prog-msg"></p>
+
+      </div><!-- /viewPrograms -->
+
     </div>
   </div>
 
   <script src="script.js"></script>
   <script src="usuarios.js"></script>
+  <script src="programas.js"></script>
 </body>
 
 </html>

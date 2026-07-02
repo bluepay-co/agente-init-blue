@@ -751,3 +751,142 @@ input:checked + .slider:before {
   display: flex;
   gap: 8px;
 }
+
+/* ============================================
+   Desinstalar Programas (v3.0)
+   ============================================ */
+.prog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.prog-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--blue);
+}
+
+/* Lista com scroll interno (pode ter 100+ programas) */
+.prog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.prog-list::-webkit-scrollbar { width: 5px; }
+.prog-list::-webkit-scrollbar-track { background: transparent; }
+.prog-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.prog-item {
+  padding: 7px 9px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  transition: border-color 0.2s, background 0.2s;
+}
+.prog-item:hover    { border-color: var(--blue-dim); }
+.prog-item.finished { border-color: var(--green); background: rgba(34,197,94,0.06); }
+
+.prog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prog-check-wrap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  min-width: 0;
+  flex: 1;
+}
+
+.prog-cb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  position: relative;
+  background: var(--bg-card);
+  transition: all 0.2s;
+}
+.prog-cb:checked { background: var(--blue); border-color: var(--blue); box-shadow: 0 0 8px var(--blue-glow); }
+.prog-cb:checked::after {
+  content: '✔';
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 10px; color: #fff;
+}
+
+.prog-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prog-status {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.prog-status.downloading { color: var(--blue); }
+.prog-status.installing  { color: var(--yellow); }
+.prog-status.done        { color: var(--green); font-weight: 600; }
+.prog-status.error       { color: var(--red); }
+
+.prog-meta {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  margin: 3px 0 0 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prog-bar-wrap {
+  width: 100%;
+  height: 3px;
+  background: var(--bg-card);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 5px;
+}
+.prog-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: var(--border);
+  transition: width 0.4s ease, background 0.3s;
+}
+.prog-bar.downloading { background: linear-gradient(90deg, var(--blue-dim), var(--blue)); }
+.prog-bar.installing  { background: linear-gradient(90deg, #b45309, var(--yellow)); animation: pulse-yellow 0.8s ease-in-out infinite; }
+.prog-bar.done        { background: linear-gradient(90deg, #16a34a, var(--green)); }
+.prog-bar.error       { background: var(--red); }
+
+/* Botão de desinstalar (vermelho) */
+.btn-uninstall {
+  background: var(--red);
+  box-shadow: 0 4px 18px rgba(239,68,68,0.35);
+}
+.btn-uninstall:hover:not(:disabled) {
+  background: #f75c5c;
+  box-shadow: 0 6px 24px rgba(239,68,68,0.5);
+}

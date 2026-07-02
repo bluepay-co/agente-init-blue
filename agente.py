@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Optional, List
 
 import usuarios  # módulo local: painel Gerenciar Usuários (v3.0)
+import programas  # módulo local: desinstalador em lote (v3.0)
 
 # ─────────────────────────────────────────────
 #  CAMINHOS
@@ -214,6 +215,9 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/api/usuarios/listar":
             # Gerenciar Usuários: retorna a lista de usuários locais reais.
             self._json_response(usuarios.listar())
+        elif self.path == "/api/programas/listar":
+            # Desinstalar Programas: lista programas desktop + apps da Store.
+            self._json_response(programas.listar())
         else:
             super().do_GET()
 
@@ -258,6 +262,15 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             p = self._read_json_body()
             self._json_response(usuarios.excluir(
                 p.get("sid", ""), bool(p.get("apagar_perfil", False))))
+
+        # ── Desinstalar Programas (v3.0) ──────────────────────────────────────
+        elif self.path == "/api/programas/desinstalar":
+            p = self._read_json_body()
+            ids = p.get("ids", [])
+            threading.Thread(
+                target=programas.desinstalar_lote, args=(ids,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
 
         else:
             self.send_error(404)
@@ -1413,8 +1426,9 @@ def main() -> None:
 
     log.info("✔  Rodando como Administrador.")
 
-    # Injeta os helpers compartilhados no módulo de usuários (evita import circular).
+    # Injeta os helpers compartilhados nos módulos locais (evita import circular).
     usuarios.init(_log, _logged_user, _NO_WINDOW)
+    programas.init(_log, _broadcast, _logged_user, _NO_WINDOW)
 
     port   = _find_free_port()
     server = _ThreadedServer(("127.0.0.1", port), AgenteHandler)

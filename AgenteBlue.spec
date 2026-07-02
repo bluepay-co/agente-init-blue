@@ -16,7 +16,7 @@ ONEFILE = os.environ.get('AGENTEBLUE_ONEFILE') == '1'
 # Assets embutidos (no onedir servem de fallback; no onefile sao a unica copia).
 # config.json embutido e usado como FALLBACK: o codigo procura primeiro um
 # config.json externo (ao lado do exe), editavel sem recompilar.
-datas = [(f, '.') for f in ('index.html', 'script.js', 'usuarios.js', 'style.css', 'config.json') if os.path.exists(f)]
+datas = [(f, '.') for f in ('index.html', 'script.js', 'usuarios.js', 'programas.js', 'style.css', 'config.json') if os.path.exists(f)]
 if os.path.exists('bluepay-ico.ico'):
     datas.append(('bluepay-ico.ico', '.'))
 
