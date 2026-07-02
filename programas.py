@@ -92,20 +92,9 @@ $list = foreach ($p in $paths) {
     }
   }
 }
-$store = Get-AppxPackage | Where-Object { -not $_.IsFramework } | ForEach-Object {
-  [pscustomobject]@{
-    id        = "appx|$($_.PackageFullName)"
-    nome      = $_.Name
-    versao    = "$($_.Version)"
-    publisher = "$($_.Publisher)"
-    local     = "$($_.InstallLocation)"
-    uninstall = ''
-    quiet     = ''
-    msi       = $false
-    tipo      = 'store'
-  }
-}
-@($list + $store) | Sort-Object nome | ConvertTo-Json -Compress -Depth 3
+# Apps da Microsoft Store ficam de fora: são padrões do Windows e não deixam
+# "lixo" no Program Files. Listamos apenas programas desktop (registro Uninstall).
+@($list) | Sort-Object nome | ConvertTo-Json -Compress -Depth 3
 """
     rc, out, err = _run_ps(ps, timeout=120)
     if rc != 0 and not out:

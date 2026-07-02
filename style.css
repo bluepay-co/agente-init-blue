@@ -526,7 +526,7 @@ input:checked + .slider:before {
    ============================================ */
 
 /* Views preservam o mesmo espaçamento vertical do .content (flex + gap). */
-#viewMain, #viewUsers {
+#viewMain, #viewUsers, #viewPrograms {
   display: flex;
   flex-direction: column;
   gap: 10px;

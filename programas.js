@@ -41,9 +41,6 @@ function renderPrograma(p, i) {
   const nome = _escProg(p.nome);
   const ver = p.versao ? _escProg(p.versao) : '';
   const pub = p.publisher ? _escProg(p.publisher) : '';
-  const badge = p.tipo === 'store'
-    ? '<span class="u-badge">Store</span>'
-    : '<span class="u-badge admin">Desktop</span>';
   const meta = [ver ? 'v' + ver : '', pub].filter(Boolean).join(' · ');
 
   return `
@@ -51,7 +48,7 @@ function renderPrograma(p, i) {
     <div class="prog-head">
       <label class="prog-check-wrap">
         <input type="checkbox" class="prog-cb" data-idx="${i}" onchange="atualizarContagem()">
-        <span class="prog-name">${nome} ${badge}</span>
+        <span class="prog-name">${nome}</span>
       </label>
       <span class="prog-status" id="prog-status-${i}"></span>
     </div>
