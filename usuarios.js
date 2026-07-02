@@ -69,8 +69,16 @@ async function carregarUsuarios() {
     return;
   }
 
+  // Mapa sid → usuário: os handlers recebem só o sid (que nunca tem aspas/HTML),
+  // e buscam o nome aqui. Evita quebrar o onclick com nomes tipo "O'Brien".
+  _usuarios = {};
+  data.usuarios.forEach(u => { _usuarios[u.sid] = u; });
+
   lista.innerHTML = data.usuarios.map(renderUsuario).join('');
 }
+
+// Cache dos usuários da última listagem, indexado por SID.
+let _usuarios = {};
 
 function renderUsuario(u) {
   const sid = _escapeHtml(u.sid);
@@ -92,8 +100,8 @@ function renderUsuario(u) {
         <div class="u-path">${pasta}</div>
       </div>
       <div class="u-actions">
-        <button class="btn-user" onclick="abrirEditar('${sid}','${nome}')">Editar</button>
-        <button class="btn-user danger" onclick="abrirExcluir('${sid}','${nome}')">Excluir</button>
+        <button class="btn-user" onclick="abrirEditar('${sid}')">Editar</button>
+        <button class="btn-user danger" onclick="abrirExcluir('${sid}')">Excluir</button>
       </div>
     </div>
     <div class="u-panel" id="panel-${sid}"></div>
@@ -125,10 +133,11 @@ async function criarUsuario() {
 }
 
 // ── Editar (renomear + senha) ────────────────────────────────────────────────
-function abrirEditar(sid, nome) {
+function abrirEditar(sid) {
   const panel = document.getElementById('panel-' + sid);
   if (panel.dataset.open === 'editar') { fecharPanel(sid); return; }
 
+  const nome = (_usuarios[sid] || {}).nome || '';
   panel.dataset.open = 'editar';
   panel.innerHTML = `
     <div class="u-edit">
@@ -136,14 +145,15 @@ function abrirEditar(sid, nome) {
       <input class="u-input" id="ed-nome-${sid}" placeholder="Novo nome (deixe vazio p/ manter)" maxlength="20" value="${_escapeHtml(nome)}" autocomplete="off">
       <input class="u-input" id="ed-senha-${sid}" type="password" placeholder="Nova senha (deixe vazio p/ manter)" autocomplete="new-password">
       <div class="u-edit-actions">
-        <button class="btn-user primary" onclick="salvarEditar('${sid}','${_escapeHtml(nome)}')">Salvar</button>
+        <button class="btn-user primary" onclick="salvarEditar('${sid}')">Salvar</button>
         <button class="btn-user" onclick="fecharPanel('${sid}')">Cancelar</button>
       </div>
       <p class="u-msg" id="ed-msg-${sid}"></p>
     </div>`;
 }
 
-async function salvarEditar(sid, nomeAtual) {
+async function salvarEditar(sid) {
+  const nomeAtual = (_usuarios[sid] || {}).nome || '';
   const novoNome = document.getElementById('ed-nome-' + sid).value.trim();
   const novaSenha = document.getElementById('ed-senha-' + sid).value;
   const msg = document.getElementById('ed-msg-' + sid);
@@ -174,10 +184,11 @@ async function salvarEditar(sid, nomeAtual) {
 }
 
 // ── Excluir ──────────────────────────────────────────────────────────────────
-function abrirExcluir(sid, nome) {
+function abrirExcluir(sid) {
   const panel = document.getElementById('panel-' + sid);
   if (panel.dataset.open === 'excluir') { fecharPanel(sid); return; }
 
+  const nome = (_usuarios[sid] || {}).nome || '';
   panel.dataset.open = 'excluir';
   panel.innerHTML = `
     <div class="u-del">

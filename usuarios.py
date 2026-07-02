@@ -117,7 +117,13 @@ def listar() -> dict:
     script = f"""
 $ErrorActionPreference = 'SilentlyContinue'
 $admGroup = (Get-LocalGroup -SID '{_ADMIN_SID}').Name
-$admins = @(Get-LocalGroupMember -Group $admGroup | ForEach-Object {{ $_.SID.Value }})
+# Get-LocalGroupMember pode falhar (bug conhecido) se o grupo tiver SIDs órfãos.
+# Se falhar, seguimos com lista vazia (admin=false p/ todos) em vez de quebrar tudo.
+try {{
+  $admins = @(Get-LocalGroupMember -Group $admGroup -ErrorAction Stop | ForEach-Object {{ $_.SID.Value }})
+}} catch {{
+  $admins = @()
+}}
 $out = foreach ($u in Get-LocalUser) {{
   $sid = $u.SID.Value
   # Oculta contas de sistema pelo SID (independe do idioma): Convidado/Guest (-501),
@@ -288,9 +294,16 @@ try {{
   Rename-LocalUser -Name $atual -NewName $novo
 
   # 2/3) Se há perfil em disco, renomeia a PASTA e corrige o REGISTRO.
+  # Se a pasta falhar (arquivo em uso etc.), desfaz o nome da conta para não
+  # deixar conta e pasta/registro dessincronizados.
   if ($new) {{
-    Rename-Item -LiteralPath $old -NewName $novo
-    Set-ItemProperty -Path $reg -Name ProfileImagePath -Value $new
+    try {{
+      Rename-Item -LiteralPath $old -NewName $novo -ErrorAction Stop
+      Set-ItemProperty -Path $reg -Name ProfileImagePath -Value $new -ErrorAction Stop
+    }} catch {{
+      Rename-LocalUser -Name $novo -NewName $atual -ErrorAction SilentlyContinue
+      throw
+    }}
   }}
   Write-Output 'OK'
 }} catch {{
@@ -320,10 +333,13 @@ def renomear(sid: str, novo_nome: str) -> dict:
     if est.get("nome") == novo_nome:
         return {"ok": False, "erro": "O novo nome é igual ao atual."}
 
-    # Colisão de conta / pasta (checagem rápida em Python).
-    novo_dir = Path(r"C:\Users") / novo_nome
-    if est.get("profile") and novo_dir.exists():
-        return {"ok": False, "erro": f"Já existe a pasta {novo_dir}."}
+    # Colisão de pasta (checagem rápida e amigável; o script PS tem a checagem
+    # autoritativa). Usa a pasta-pai REAL do perfil, não um C:\Users fixo.
+    prof = est.get("profile")
+    if prof:
+        novo_dir = Path(prof).parent / novo_nome
+        if novo_dir.exists():
+            return {"ok": False, "erro": f"Já existe a pasta {novo_dir}."}
 
     # ── Caso normal: alvo DESLOGADO → renomeia na hora ────────────────────────
     if not est.get("loaded"):
