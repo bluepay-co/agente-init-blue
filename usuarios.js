@@ -1,0 +1,216 @@
+// ============================================
+//  Agente Blue — usuarios.js  (v3.0)
+//  Painel "Gerenciar Usuários": listar, criar,
+//  editar (renomear + senha) e excluir.
+//  JavaScript puro, sem dependências.
+// ============================================
+
+// ── Navegação entre as views (Setup / Usuários) ──────────────────────────────
+function showView(view) {
+  const main  = document.getElementById('viewMain');
+  const users = document.getElementById('viewUsers');
+  const tSetup = document.getElementById('tab-setup');
+  const tUsers = document.getElementById('tab-users');
+
+  const isUsers = view === 'users';
+  main.style.display  = isUsers ? 'none' : 'flex';
+  users.style.display = isUsers ? 'flex' : 'none';
+  tSetup.classList.toggle('active', !isUsers);
+  tUsers.classList.toggle('active', isUsers);
+
+  if (isUsers) carregarUsuarios();
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function _msg(el, texto, tipo) {
+  el.textContent = texto || '';
+  el.className = 'u-msg' + (tipo ? ' ' + tipo : '');
+}
+
+async function _post(url, body) {
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    return await r.json();
+  } catch (e) {
+    return { ok: false, erro: 'Falha ao contactar o servidor.' };
+  }
+}
+
+function _escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ── Listar ───────────────────────────────────────────────────────────────────
+async function carregarUsuarios() {
+  const lista = document.getElementById('user-list');
+  lista.innerHTML = '<p class="u-loading">Carregando…</p>';
+
+  let data;
+  try {
+    const r = await fetch('/api/usuarios/listar');
+    data = await r.json();
+  } catch (e) {
+    lista.innerHTML = '<p class="u-loading">Falha ao carregar usuários.</p>';
+    return;
+  }
+
+  if (!data.ok) {
+    lista.innerHTML = '<p class="u-loading">' + _escapeHtml(data.erro || 'Erro ao listar.') + '</p>';
+    return;
+  }
+  if (!data.usuarios || data.usuarios.length === 0) {
+    lista.innerHTML = '<p class="u-loading">Nenhum usuário encontrado.</p>';
+    return;
+  }
+
+  lista.innerHTML = data.usuarios.map(renderUsuario).join('');
+}
+
+function renderUsuario(u) {
+  const sid = _escapeHtml(u.sid);
+  const nome = _escapeHtml(u.nome);
+  const pasta = u.profile ? _escapeHtml(u.profile) : '— (sem perfil; criado no 1º login)';
+  const cargo = u.admin
+    ? '<span class="u-badge admin">Administrador</span>'
+    : '<span class="u-badge">Usuário</span>';
+  const flags = [];
+  if (u.builtin) flags.push('<span class="u-badge lock">Interno</span>');
+  if (u.logado)  flags.push('<span class="u-badge on">Logado</span>');
+  if (u.enabled === false) flags.push('<span class="u-badge off">Desativado</span>');
+
+  return `
+  <div class="u-item" id="u-${sid}">
+    <div class="u-row">
+      <div class="u-main">
+        <div class="u-name">${nome} ${cargo} ${flags.join(' ')}</div>
+        <div class="u-path">${pasta}</div>
+      </div>
+      <div class="u-actions">
+        <button class="btn-user" onclick="abrirEditar('${sid}','${nome}')">Editar</button>
+        <button class="btn-user danger" onclick="abrirExcluir('${sid}','${nome}')">Excluir</button>
+      </div>
+    </div>
+    <div class="u-panel" id="panel-${sid}"></div>
+  </div>`;
+}
+
+// ── Criar ────────────────────────────────────────────────────────────────────
+async function criarUsuario() {
+  const nomeEl  = document.getElementById('nu-nome');
+  const senhaEl = document.getElementById('nu-senha');
+  const adminEl = document.getElementById('nu-admin');
+  const msg     = document.getElementById('nu-msg');
+
+  const nome = nomeEl.value.trim();
+  if (!nome) { _msg(msg, 'Informe um nome de usuário.', 'err'); return; }
+
+  _msg(msg, 'Criando…', 'info');
+  const r = await _post('/api/usuarios/criar', {
+    nome: nome, senha: senhaEl.value, admin: adminEl.checked
+  });
+
+  if (r.ok) {
+    _msg(msg, r.msg || 'Usuário criado.', 'ok');
+    nomeEl.value = ''; senhaEl.value = ''; adminEl.checked = false;
+    carregarUsuarios();
+  } else {
+    _msg(msg, r.erro || 'Falha ao criar.', 'err');
+  }
+}
+
+// ── Editar (renomear + senha) ────────────────────────────────────────────────
+function abrirEditar(sid, nome) {
+  const panel = document.getElementById('panel-' + sid);
+  if (panel.dataset.open === 'editar') { fecharPanel(sid); return; }
+
+  panel.dataset.open = 'editar';
+  panel.innerHTML = `
+    <div class="u-edit">
+      <p class="u-edit-title">Editar <strong>${_escapeHtml(nome)}</strong></p>
+      <input class="u-input" id="ed-nome-${sid}" placeholder="Novo nome (deixe vazio p/ manter)" maxlength="20" value="${_escapeHtml(nome)}" autocomplete="off">
+      <input class="u-input" id="ed-senha-${sid}" type="password" placeholder="Nova senha (deixe vazio p/ manter)" autocomplete="new-password">
+      <div class="u-edit-actions">
+        <button class="btn-user primary" onclick="salvarEditar('${sid}','${_escapeHtml(nome)}')">Salvar</button>
+        <button class="btn-user" onclick="fecharPanel('${sid}')">Cancelar</button>
+      </div>
+      <p class="u-msg" id="ed-msg-${sid}"></p>
+    </div>`;
+}
+
+async function salvarEditar(sid, nomeAtual) {
+  const novoNome = document.getElementById('ed-nome-' + sid).value.trim();
+  const novaSenha = document.getElementById('ed-senha-' + sid).value;
+  const msg = document.getElementById('ed-msg-' + sid);
+
+  // Se o nome não mudou, não envia rename (evita erro "nome igual ao atual").
+  const nomeParaEnviar = (novoNome && novoNome !== nomeAtual) ? novoNome : '';
+  if (!nomeParaEnviar && !novaSenha) {
+    _msg(msg, 'Altere o nome ou a senha.', 'err');
+    return;
+  }
+
+  _msg(msg, 'Salvando…', 'info');
+  const r = await _post('/api/usuarios/editar', {
+    sid: sid, novo_nome: nomeParaEnviar, nova_senha: novaSenha
+  });
+
+  if (r.ok) {
+    if (r.modo === 'reboot') {
+      _msg(msg, r.msg || 'Renomeação agendada; o PC vai reiniciar.', 'info');
+      alert(r.msg);
+    } else {
+      _msg(msg, r.msg || 'Alterações salvas.', 'ok');
+      setTimeout(() => carregarUsuarios(), 700);
+    }
+  } else {
+    _msg(msg, r.erro || 'Falha ao salvar.', 'err');
+  }
+}
+
+// ── Excluir ──────────────────────────────────────────────────────────────────
+function abrirExcluir(sid, nome) {
+  const panel = document.getElementById('panel-' + sid);
+  if (panel.dataset.open === 'excluir') { fecharPanel(sid); return; }
+
+  panel.dataset.open = 'excluir';
+  panel.innerHTML = `
+    <div class="u-del">
+      <p class="u-del-title">Excluir <strong>${_escapeHtml(nome)}</strong>?</p>
+      <label class="u-role">
+        <input type="checkbox" id="del-perfil-${sid}">
+        <span>Apagar também a pasta e os dados do perfil (irreversível)</span>
+      </label>
+      <div class="u-edit-actions">
+        <button class="btn-user danger" onclick="confirmarExcluir('${sid}')">Confirmar exclusão</button>
+        <button class="btn-user" onclick="fecharPanel('${sid}')">Cancelar</button>
+      </div>
+      <p class="u-msg" id="del-msg-${sid}"></p>
+    </div>`;
+}
+
+async function confirmarExcluir(sid) {
+  const apagar = document.getElementById('del-perfil-' + sid).checked;
+  const msg = document.getElementById('del-msg-' + sid);
+
+  _msg(msg, 'Excluindo…', 'info');
+  const r = await _post('/api/usuarios/excluir', { sid: sid, apagar_perfil: apagar });
+
+  if (r.ok) {
+    _msg(msg, r.msg || 'Usuário excluído.', 'ok');
+    setTimeout(() => carregarUsuarios(), 700);
+  } else {
+    _msg(msg, r.erro || 'Falha ao excluir.', 'err');
+  }
+}
+
+// ── Fechar painel inline ─────────────────────────────────────────────────────
+function fecharPanel(sid) {
+  const panel = document.getElementById('panel-' + sid);
+  if (panel) { panel.dataset.open = ''; panel.innerHTML = ''; }
+}

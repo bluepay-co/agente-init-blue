@@ -20,7 +20,7 @@ $DistDir    = Join-Path $PSScriptRoot 'dist'
 $OutDir     = Join-Path $DistDir $AppName            # saida onedir (pasta)
 $ExePath    = Join-Path $OutDir "$AppName.exe"
 $OnefileExe = Join-Path $DistDir "$AppName.exe"      # saida onefile (arquivo unico)
-$Assets     = @('index.html', 'script.js', 'style.css', 'bluepay-ico.ico', 'config.json')
+$Assets     = @('index.html', 'script.js', 'usuarios.js', 'style.css', 'bluepay-ico.ico', 'config.json')
 
 if ($AssetsOnly -and $Onefile) {
     Write-Host " [ERRO] -AssetsOnly nao se aplica ao onefile (assets ficam embutidos no exe)." -ForegroundColor Red
@@ -139,7 +139,7 @@ Write-Host "   Tam:  $mb MB    Data: $($exe.LastWriteTime)" -ForegroundColor Gre
 Write-Host " ===================================================" -ForegroundColor Green
 Write-Host ""
 if ($Onefile) {
-    Write-Host " Entrega: copie este .exe + a pasta apps\ + Fundo de Tela.jpg para o pendrive." -ForegroundColor DarkGray
+    Write-Host " Entrega: copie APENAS este .exe — instaladores, wallpaper e config ja estao embutidos." -ForegroundColor DarkGray
 } else {
     Write-Host " Dica: alterou so a interface (html/js/css)? Use:" -ForegroundColor DarkGray
     Write-Host "   .\compilar.ps1 -AssetsOnly   (atualiza sem recompilar)" -ForegroundColor DarkGray

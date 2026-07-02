@@ -24,6 +24,15 @@
         <p class="app-version">v2.0.1 — BlueControl IT</p>
       </div>
 
+      <!-- Navegação entre Setup e Gerenciar Usuários -->
+      <div class="nav-tabs">
+        <button class="nav-tab active" id="tab-setup" onclick="showView('main')">⚙ Setup</button>
+        <button class="nav-tab" id="tab-users" onclick="showView('users')">👥 Gerenciar Usuários</button>
+      </div>
+
+      <!-- ══════════ VIEW: SETUP ══════════ -->
+      <div id="viewMain">
+
       <!-- Opções -->
       <div class="card opt-card">
         <p class="card-label">Opções de Execução</p>
@@ -242,10 +251,44 @@
         ▶ &nbsp;EXECUTAR SETUP
       </button>
 
+      </div><!-- /viewMain -->
+
+      <!-- ══════════ VIEW: GERENCIAR USUÁRIOS ══════════ -->
+      <div id="viewUsers" style="display:none;">
+
+        <!-- Criar usuário -->
+        <div class="card">
+          <p class="card-label">Criar Usuário</p>
+          <div class="user-form">
+            <input id="nu-nome" class="u-input" placeholder="Nome do usuário" maxlength="20" autocomplete="off">
+            <input id="nu-senha" class="u-input" type="password" placeholder="Senha (opcional)" autocomplete="new-password">
+            <label class="u-role">
+              <input type="checkbox" id="nu-admin">
+              <span>Administrador</span>
+            </label>
+            <button class="btn-user primary" onclick="criarUsuario()">Criar usuário</button>
+          </div>
+          <p class="u-msg" id="nu-msg"></p>
+        </div>
+
+        <!-- Lista de usuários -->
+        <div class="card">
+          <div class="user-list-head">
+            <p class="card-label" style="margin:0;">Usuários da Máquina</p>
+            <button class="btn-refresh" onclick="carregarUsuarios()" title="Atualizar lista">↻</button>
+          </div>
+          <div id="user-list" class="user-list">
+            <p class="u-loading">Carregando…</p>
+          </div>
+        </div>
+
+      </div><!-- /viewUsers -->
+
     </div>
   </div>
 
   <script src="script.js"></script>
+  <script src="usuarios.js"></script>
 </body>
 
 </html>

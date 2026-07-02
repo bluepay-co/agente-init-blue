@@ -35,6 +35,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 
+import usuarios  # módulo local: painel Gerenciar Usuários (v3.0)
+
 # ─────────────────────────────────────────────
 #  CAMINHOS
 # ─────────────────────────────────────────────
@@ -209,20 +211,26 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/stream":
             self._handle_sse()
+        elif self.path == "/api/usuarios/listar":
+            # Gerenciar Usuários: retorna a lista de usuários locais reais.
+            self._json_response(usuarios.listar())
         else:
             super().do_GET()
 
+    def _read_json_body(self) -> dict:
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length) if content_length else b""
+        if not post_data:
+            return {}
+        try:
+            return json.loads(post_data.decode("utf-8"))
+        except Exception:
+            return {}
+
     def do_POST(self):
         if self.path == "/api/execute":
-            content_length = int(self.headers.get("Content-Length", 0))
-            post_data = self.rfile.read(content_length)
-            params = {}
-            if post_data:
-                try:
-                    params = json.loads(post_data.decode("utf-8"))
-                except Exception:
-                    pass
-            
+            params = self._read_json_body()
+
             instalar = params.get("instalar_softwares", True)
             otimizar = params.get("otimizacao", True)
             sw_lista = params.get("softwares_selecionados", [])
@@ -234,6 +242,23 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
                 daemon=True,
             ).start()
             self._json_response({"ok": True})
+
+        # ── Gerenciar Usuários (v3.0) ─────────────────────────────────────────
+        elif self.path == "/api/usuarios/criar":
+            p = self._read_json_body()
+            self._json_response(usuarios.criar(
+                p.get("nome", ""), p.get("senha", ""), bool(p.get("admin", False))))
+
+        elif self.path == "/api/usuarios/editar":
+            p = self._read_json_body()
+            self._json_response(usuarios.editar(
+                p.get("sid", ""), p.get("novo_nome", ""), p.get("nova_senha", "")))
+
+        elif self.path == "/api/usuarios/excluir":
+            p = self._read_json_body()
+            self._json_response(usuarios.excluir(
+                p.get("sid", ""), bool(p.get("apagar_perfil", False))))
+
         else:
             self.send_error(404)
 
@@ -1387,6 +1412,9 @@ def main() -> None:
         return
 
     log.info("✔  Rodando como Administrador.")
+
+    # Injeta os helpers compartilhados no módulo de usuários (evita import circular).
+    usuarios.init(_log, _logged_user, _NO_WINDOW)
 
     port   = _find_free_port()
     server = _ThreadedServer(("127.0.0.1", port), AgenteHandler)
