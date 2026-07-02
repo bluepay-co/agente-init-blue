@@ -99,7 +99,7 @@ async function desinstalarSelecionados() {
   const btn = document.getElementById('btnDesinstalar');
   const msg = document.getElementById('prog-msg');
   btn.disabled = true;
-  btn.textContent = '⏳  DESINSTALANDO…';
+  btn.textContent = 'DESINSTALANDO…';
   _msgP(msg, 'Iniciando desinstalação…', 'info');
 
   // Mapeia nome → elementos de progresso (para atualizar a barra certa via SSE).
@@ -158,7 +158,7 @@ function _onProgFim(e) {
   if (_progES) { _progES.close(); _progES = null; }
   const btn = document.getElementById('btnDesinstalar');
   const msg = document.getElementById('prog-msg');
-  btn.textContent = '🗑  DESINSTALAR SELECIONADOS';
+  btn.textContent = 'DESINSTALAR SELECIONADOS';
   btn.disabled = false;
 
   const tipo = e.erro > 0 ? 'err' : 'ok';

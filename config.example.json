@@ -26,7 +26,8 @@
       "args": "--install \"C:\\Program Files (x86)\\AnyDesk\" --silent --start-with-win --create-shortcuts --create-desktop-icon",
       "ok_codes": [0, 11],
       "detect": "C:\\Program Files (x86)\\AnyDesk\\AnyDesk.exe",
-      "firewall": true
+      "firewall": true,
+      "unattended_password": "DEFINA_A_SENHA_AQUI"
     },
     {
       "nome": "Google Chrome",

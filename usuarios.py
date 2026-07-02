@@ -33,8 +33,9 @@ _log = lambda msg, tipo="muted": None
 _logged_user = lambda: None
 _NO_WINDOW = 0
 
-# Grupo de Administradores pelo SID well-known (independe do idioma do Windows).
-_ADMIN_SID = "S-1-5-32-544"
+# Grupos pelo SID well-known (independe do idioma do Windows).
+_ADMIN_SID = "S-1-5-32-544"   # Administradores
+_USERS_SID = "S-1-5-32-545"   # Usuários
 # Nome fixo da tarefa agendada usada na renomeação em boot.
 _TASK_RENAME = "AgenteBlue_RenameBoot"
 
@@ -174,8 +175,11 @@ def criar(nome: str, senha: str = "", admin: bool = False) -> dict:
         cria = (f"New-LocalUser -Name '{n}' -FullName '{n}' -NoPassword "
                 f"-AccountNeverExpires -ErrorAction Stop")
 
-    add_admin = (f"Add-LocalGroupMember -Group (Get-LocalGroup -SID '{_ADMIN_SID}').Name "
-                 f"-Member '{n}' -ErrorAction Stop") if admin else ""
+    # Todo usuário entra no grupo Usuários (senão nem aparece na tela de login).
+    # Se Admin, entra também no grupo Administradores.
+    grupo_sid = _ADMIN_SID if admin else _USERS_SID
+    add_grupo = (f"Add-LocalGroupMember -Group (Get-LocalGroup -SID '{grupo_sid}').Name "
+                 f"-Member '{n}' -ErrorAction Stop")
 
     script = f"""
 $ErrorActionPreference = 'Stop'
@@ -183,7 +187,7 @@ try {{
   if (Get-LocalUser -Name '{n}' -ErrorAction SilentlyContinue) {{ throw 'Já existe um usuário com esse nome.' }}
   {senha_linha}
   {cria} | Out-Null
-  {add_admin}
+  {add_grupo}
   Write-Output 'OK'
 }} catch {{
   Write-Error $_.Exception.Message

@@ -775,6 +775,19 @@ def _etapa_downloads(sw_lista: list = None) -> bool:
                 _log("  ⚡  Liberando AnyDesk no Firewall...", "muted")
                 _run_cmd(f'netsh advfirewall firewall add rule name="AnyDesk_Blue" dir=in action=allow program="{detect}" enable=yes', label="Firewall: AnyDesk Inbound")
                 _run_cmd(f'netsh advfirewall firewall add rule name="AnyDesk_Blue" dir=out action=allow program="{detect}" enable=yes', label="Firewall: AnyDesk Outbound")
+
+            # Senha de Acesso Não Supervisionado (definida via config.json).
+            # `--set-password` grava a senha e já habilita o acesso não
+            # supervisionado, sem precisar abrir a interface do AnyDesk.
+            senha_anydesk = app.get("unattended_password")
+            if senha_anydesk and detect:
+                _log("  🔑  Definindo senha de acesso não supervisionado do AnyDesk...", "muted")
+                # A senha vai por stdin (echo | AnyDesk --set-password), então
+                # nunca aparece na linha de comando/logs de processo.
+                _run_cmd(
+                    f'echo {senha_anydesk}| "{detect}" --set-password',
+                    label="AnyDesk: senha de acesso não supervisionado", timeout=30,
+                )
         else:
             _log(f"  ⚠  Instalação de {nome} pode ter falhado (verifique o log).", "warn")
             _sw_progress(nome, "erro", 0)
@@ -1036,8 +1049,13 @@ def _etapa_usuarios() -> bool:
 # somente a família Xbox. Padrões aceitam curinga (*).
 # Nada essencial é tocado (Loja, Calculadora, Fotos, Terminal, Paint, Notepad…).
 _BLOATWARE: List[str] = [
-    "Microsoft.Xbox*",        # Xbox (app, overlays, identity, TCUI, Game Bar…)
-    "Microsoft.GamingApp",    # App Xbox (novo)
+    "Microsoft.Xbox*",             # Xbox (app, overlays, identity, TCUI, Game Bar…)
+    "Microsoft.GamingApp",         # App Xbox (novo)
+    "Microsoft.Windows.Copilot",   # Copilot
+    "Microsoft.Copilot",           # Copilot (app da Store)
+    "Microsoft.BingNews",          # Bing News / Notícias
+    "Clipchamp.Clipchamp",         # Editor de vídeo Clipchamp
+    "Microsoft.MicrosoftSolitaireCollection",  # Solitaire
 ]
 
 
@@ -1252,6 +1270,17 @@ def _etapa_otimizacao() -> bool:
     _run_cmd(r'rd /s /q "C:\Windows\SoftwareDistribution\Download"', label="Limpar cache de download", timeout=30)
     _run_cmd("net start wuauserv", label="Reiniciar Windows Update", timeout=15)
     acoes_ok += 1
+
+    # ── 5.1. Otimização do disco do sistema (TRIM em SSD / desfrag em HD) ──────
+    # Optimize-Volume detecta o tipo de mídia automaticamente:
+    #   • SSD  → envia comandos TRIM/ReTrim (não desfragmenta, preserva a vida útil)
+    #   • HD   → desfragmenta de fato
+    _log("  > Otimizando o disco do sistema (C:)...", "muted")
+    if _run_cmd(
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command "Optimize-Volume -DriveLetter C -Verbose"',
+        label="Otimizar disco C: (TRIM/Desfrag)", timeout=900,
+    ):
+        acoes_ok += 1
 
     # ── 6. Remoção de bloatware (Xbox) + OneDrive ─────────────────────────────
     _remover_bloatware()
