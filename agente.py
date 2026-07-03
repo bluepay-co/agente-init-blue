@@ -35,6 +35,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 
+import usuarios  # módulo local: painel Gerenciar Usuários (v3.0)
+import programas  # módulo local: desinstalador em lote (v3.0)
+
 # ─────────────────────────────────────────────
 #  CAMINHOS
 # ─────────────────────────────────────────────
@@ -97,11 +100,6 @@ _ADMIN_PASS: str = _admin_cfg.get("senha", "")
 #                         Se ela não existir, cria uma com o nome informado.
 # ─────────────────────────────────────────────
 USUARIOS: List[dict] = _CONFIG.get("usuarios", [])
-
-# ─────────────────────────────────────────────
-#  IMPRESSORA DE REDE (de config.json)
-# ─────────────────────────────────────────────
-IMPRESSORA: dict = _CONFIG.get("impressora", {})
 
 # ─────────────────────────────────────────────
 #  VERIFICAÇÃO DE INTEGRIDADE (de config.json)
@@ -214,32 +212,66 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/stream":
             self._handle_sse()
+        elif self.path == "/api/usuarios/listar":
+            # Gerenciar Usuários: retorna a lista de usuários locais reais.
+            self._json_response(usuarios.listar())
+        elif self.path == "/api/programas/listar":
+            # Desinstalar Programas: lista programas desktop + apps da Store.
+            self._json_response(programas.listar())
         else:
             super().do_GET()
 
+    def _read_json_body(self) -> dict:
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length) if content_length else b""
+        if not post_data:
+            return {}
+        try:
+            return json.loads(post_data.decode("utf-8"))
+        except Exception:
+            return {}
+
     def do_POST(self):
         if self.path == "/api/execute":
-            content_length = int(self.headers.get("Content-Length", 0))
-            post_data = self.rfile.read(content_length)
-            params = {}
-            if post_data:
-                try:
-                    params = json.loads(post_data.decode("utf-8"))
-                except Exception:
-                    pass
-            
+            params = self._read_json_body()
+
             instalar = params.get("instalar_softwares", True)
             otimizar = params.get("otimizacao", True)
             sw_lista = params.get("softwares_selecionados", [])
-            impressora = params.get("instalar_impressora", True)
             integridade = params.get("verificar_integridade", True)
 
             threading.Thread(
                 target=run_automation,
-                args=(instalar, otimizar, sw_lista, impressora, integridade),
+                args=(instalar, otimizar, sw_lista, integridade),
                 daemon=True,
             ).start()
             self._json_response({"ok": True})
+
+        # ── Gerenciar Usuários (v3.0) ─────────────────────────────────────────
+        elif self.path == "/api/usuarios/criar":
+            p = self._read_json_body()
+            self._json_response(usuarios.criar(
+                p.get("nome", ""), p.get("senha", ""), bool(p.get("admin", False))))
+
+        elif self.path == "/api/usuarios/editar":
+            p = self._read_json_body()
+            self._json_response(usuarios.editar(
+                p.get("sid", ""), p.get("novo_nome", ""), p.get("nova_senha", "")))
+
+        elif self.path == "/api/usuarios/excluir":
+            p = self._read_json_body()
+            self._json_response(usuarios.excluir(
+                p.get("sid", ""), bool(p.get("apagar_perfil", False))))
+
+        # ── Desinstalar Programas (v3.0) ──────────────────────────────────────
+        elif self.path == "/api/programas/desinstalar":
+            p = self._read_json_body()
+            ids = p.get("ids", [])
+            threading.Thread(
+                target=programas.desinstalar_lote, args=(ids,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+
         else:
             self.send_error(404)
 
@@ -743,6 +775,19 @@ def _etapa_downloads(sw_lista: list = None) -> bool:
                 _log("  ⚡  Liberando AnyDesk no Firewall...", "muted")
                 _run_cmd(f'netsh advfirewall firewall add rule name="AnyDesk_Blue" dir=in action=allow program="{detect}" enable=yes', label="Firewall: AnyDesk Inbound")
                 _run_cmd(f'netsh advfirewall firewall add rule name="AnyDesk_Blue" dir=out action=allow program="{detect}" enable=yes', label="Firewall: AnyDesk Outbound")
+
+            # Senha de Acesso Não Supervisionado (definida via config.json).
+            # `--set-password` grava a senha e já habilita o acesso não
+            # supervisionado, sem precisar abrir a interface do AnyDesk.
+            senha_anydesk = app.get("unattended_password")
+            if senha_anydesk and detect:
+                _log("  🔑  Definindo senha de acesso não supervisionado do AnyDesk...", "muted")
+                # A senha vai por stdin (echo | AnyDesk --set-password), então
+                # nunca aparece na linha de comando/logs de processo.
+                _run_cmd(
+                    f'echo {senha_anydesk}| "{detect}" --set-password',
+                    label="AnyDesk: senha de acesso não supervisionado", timeout=30,
+                )
         else:
             _log(f"  ⚠  Instalação de {nome} pode ter falhado (verifique o log).", "warn")
             _sw_progress(nome, "erro", 0)
@@ -1004,8 +1049,13 @@ def _etapa_usuarios() -> bool:
 # somente a família Xbox. Padrões aceitam curinga (*).
 # Nada essencial é tocado (Loja, Calculadora, Fotos, Terminal, Paint, Notepad…).
 _BLOATWARE: List[str] = [
-    "Microsoft.Xbox*",        # Xbox (app, overlays, identity, TCUI, Game Bar…)
-    "Microsoft.GamingApp",    # App Xbox (novo)
+    "Microsoft.Xbox*",             # Xbox (app, overlays, identity, TCUI, Game Bar…)
+    "Microsoft.GamingApp",         # App Xbox (novo)
+    "Microsoft.Windows.Copilot",   # Copilot
+    "Microsoft.Copilot",           # Copilot (app da Store)
+    "Microsoft.BingNews",          # Bing News / Notícias
+    "Clipchamp.Clipchamp",         # Editor de vídeo Clipchamp
+    "Microsoft.MicrosoftSolitaireCollection",  # Solitaire
 ]
 
 
@@ -1140,13 +1190,12 @@ def _etapa_otimizacao() -> bool:
     #     menus, controles, listas etc. (é o que o Windows grava nesse modo)
     #   • MinAnimate=0       → animação de minimizar/maximizar janela
     #   • TaskbarAnimations=0→ animações da barra de tarefas
-    #   • DragFullWindows=0  → não desenhar conteúdo da janela ao arrastar
     #   • ListviewAlphaSelect / ListviewShadow=0 → seleção translúcida e sombras
     _run_cmd(f'reg add "{visualfx}" /v VisualFXSetting /t REG_DWORD /d 2 /f', label="Efeitos visuais: melhor desempenho")
     _run_cmd(f'reg add "{desktop}" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f', label="Efeitos de animação: OFF (máscara)")
     _run_cmd(f'reg add "{winmetrics}" /v MinAnimate /t REG_SZ /d 0 /f', label="Animação de janela: OFF")
     _run_cmd(f'reg add "{advanced}" /v TaskbarAnimations /t REG_DWORD /d 0 /f', label="Animações da barra de tarefas: OFF")
-    _run_cmd(f'reg add "{desktop}" /v DragFullWindows /t REG_SZ /d 0 /f', label="Conteúdo ao arrastar: OFF")
+
     _run_cmd(f'reg add "{advanced}" /v ListviewAlphaSelect /t REG_DWORD /d 0 /f', label="Seleção translúcida: OFF")
     _run_cmd(f'reg add "{advanced}" /v ListviewShadow /t REG_DWORD /d 0 /f', label="Sombras de ícones: OFF")
 
@@ -1222,6 +1271,17 @@ def _etapa_otimizacao() -> bool:
     _run_cmd("net start wuauserv", label="Reiniciar Windows Update", timeout=15)
     acoes_ok += 1
 
+    # ── 5.1. Otimização do disco do sistema (TRIM em SSD / desfrag em HD) ──────
+    # Optimize-Volume detecta o tipo de mídia automaticamente:
+    #   • SSD  → envia comandos TRIM/ReTrim (não desfragmenta, preserva a vida útil)
+    #   • HD   → desfragmenta de fato
+    _log("  > Otimizando o disco do sistema (C:)...", "muted")
+    if _run_cmd(
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command "Optimize-Volume -DriveLetter C -Verbose"',
+        label="Otimizar disco C: (TRIM/Desfrag)", timeout=900,
+    ):
+        acoes_ok += 1
+
     # ── 6. Remoção de bloatware (Xbox) + OneDrive ─────────────────────────────
     _remover_bloatware()
     _remover_onedrive()
@@ -1244,85 +1304,6 @@ def _etapa_otimizacao() -> bool:
 
     _etapa_fim("otimizacao", True, 90)
     return True
-
-
-def _etapa_impressora() -> bool:
-    """Instala uma impressora de rede por IP direto (porta TCP/IP).
-    Configuração vem de IMPRESSORA (config.json). O driver é obtido via
-    Windows Update / catálogo nativo do Windows no momento da instalação.
-    Usa cmdlets do módulo PrintManagement (Add-PrinterPort/Add-Printer)."""
-    _etapa_inicio("impressora", 74)
-
-    if not IMPRESSORA or not IMPRESSORA.get("habilitar"):
-        _log("  Impressora desabilitada na configuração. Pulando...", "muted")
-        _etapa_fim("impressora", True, 80)
-        return True
-
-    nome = IMPRESSORA.get("nome", "Impressora de Rede")
-    ip = (IMPRESSORA.get("ip") or "").strip()
-    padrao = bool(IMPRESSORA.get("padrao"))
-
-    if not ip:
-        _log("  ⚠  IP da impressora não informado no config.json. Pulando...", "warn")
-        _etapa_fim("impressora", False, 80)
-        return False
-
-    porta = f"IP_{ip}"
-    _log(f"\n  🖨  Instalando impressora '{nome}' em {ip}...", "info")
-
-    # Garante o serviço de Spooler ativo (no Sandbox costuma vir parado/manual).
-    _run_cmd("sc config Spooler start= auto", label="Spooler → automático")
-    _run_cmd("net start Spooler", label="Iniciar Spooler")
-
-    def _esc(s: str) -> str:
-        return s.replace("'", "''")
-
-    # PowerShell idempotente:
-    #  1. cria a porta TCP/IP se não existir
-    #  2. tenta resolver o driver pelo nome; se não houver, dispara a busca do
-    #     Windows Update (RICOH) e tenta de novo
-    #  3. cria a impressora (ou atualiza a porta se já existir)
-    #  4. opcionalmente define como padrão
-    ps = (
-        "$ErrorActionPreference = 'Stop'; "
-        f"$nome = '{_esc(nome)}'; $ip = '{_esc(ip)}'; $porta = '{_esc(porta)}'; "
-        # Porta TCP/IP
-        "if (-not (Get-PrinterPort -Name $porta -ErrorAction SilentlyContinue)) { "
-        "  Add-PrinterPort -Name $porta -PrinterHostAddress $ip; "
-        "  Write-Host \"  [+] Porta TCP/IP criada: $porta\" "
-        "} else { Write-Host \"  [=] Porta ja existe: $porta\" }; "
-        # Driver: usa o do sistema; se ausente, força varredura do Windows Update
-        "$drv = Get-PrinterDriver -Name $nome -ErrorAction SilentlyContinue; "
-        "if (-not $drv) { "
-        "  Write-Host '  [i] Driver nao encontrado localmente. Buscando no Windows Update...'; "
-        "  try { Add-PrinterDriver -Name $nome -ErrorAction Stop; "
-        "        $drv = Get-PrinterDriver -Name $nome -ErrorAction SilentlyContinue } catch {} "
-        "}; "
-        "if (-not $drv) { "
-        "  Write-Host '  [!] Driver da impressora nao disponivel. Instale o driver RICOH e rode novamente.'; "
-        "  exit 2 "
-        "}; "
-        # Impressora
-        "if (Get-Printer -Name $nome -ErrorAction SilentlyContinue) { "
-        "  Set-Printer -Name $nome -PortName $porta; "
-        "  Write-Host \"  [*] Impressora atualizada: $nome\" "
-        "} else { "
-        "  Add-Printer -Name $nome -DriverName $nome -PortName $porta; "
-        "  Write-Host \"  [*] Impressora instalada: $nome\" "
-        "}; "
-        + (
-            "$p=New-Object -ComObject WScript.Network; "
-            "$p.SetDefaultPrinter($nome); "
-            "Write-Host \"  [*] Definida como padrao: $nome\"; "
-            if padrao else ""
-        )
-    )
-
-    cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "{ps}"'
-    ok = _run_cmd(cmd, label=f"Instalar impressora {nome}", timeout=300)
-
-    _etapa_fim("impressora", ok, 80)
-    return ok
 
 
 def _etapa_integridade() -> bool:
@@ -1372,8 +1353,7 @@ def _etapa_integridade() -> bool:
 # ══════════════════════════════════════════════
 
 def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
-                   sw_lista: list = None, instalar_impressora: bool = True,
-                   verificar_integridade: bool = True):
+                   sw_lista: list = None, verificar_integridade: bool = True):
     inicio = datetime.now()
     erros: List[str] = []
 
@@ -1401,15 +1381,6 @@ def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
     # Criação de usuários locais (sempre executada)
     if not _etapa_usuarios():
         erros.append("usuarios")
-
-    # Impressora de rede (Opcional)
-    if instalar_impressora:
-        if not _etapa_impressora():
-            erros.append("impressora")
-    else:
-        _log("\n  [INFO] Pulando etapa de impressora.", "info")
-        _etapa_inicio("impressora", 74)
-        _etapa_fim("impressora", True, 80)
 
     # Otimização (Opcional)
     if otimizacao:
@@ -1483,6 +1454,10 @@ def main() -> None:
         return
 
     log.info("✔  Rodando como Administrador.")
+
+    # Injeta os helpers compartilhados nos módulos locais (evita import circular).
+    usuarios.init(_log, _logged_user, _NO_WINDOW)
+    programas.init(_log, _broadcast, _logged_user, _NO_WINDOW)
 
     port   = _find_free_port()
     server = _ThreadedServer(("127.0.0.1", port), AgenteHandler)

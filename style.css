@@ -345,33 +345,6 @@ input:checked + .slider:before {
   transition: color 0.3s;
 }
 
-/* ── Log box — altura fixa menor ── */
-.log-box {
-  background: var(--bg-log);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 16px;
-  height: 200px;
-  overflow-y: auto;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--text-muted);
-  line-height: 1.7;
-  scroll-behavior: smooth;
-}
-
-.log-box::-webkit-scrollbar { width: 4px; }
-.log-box::-webkit-scrollbar-track { background: transparent; }
-.log-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-.log-placeholder { color: var(--text-muted); font-style: italic; }
-
-.log-line       { display: block; }
-.log-line.ok    { color: var(--green);  }
-.log-line.info  { color: var(--blue);   }
-.log-line.warn  { color: var(--yellow); }
-.log-line.err   { color: var(--red);    }
-.log-line.muted { color: var(--text-muted); }
 
 /* ── Botão Executar ── */
 .btn-executar {
@@ -546,4 +519,374 @@ input:checked + .slider:before {
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================
+   Gerenciar Usuários (v3.0)
+   ============================================ */
+
+/* Views preservam o mesmo espaçamento vertical do .content (flex + gap). */
+#viewMain, #viewUsers, #viewPrograms {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Abas de navegação ── */
+.nav-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.nav-tab {
+  flex: 1;
+  padding: 8px 10px;
+  font-family: var(--font-title);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.nav-tab:hover { color: var(--text-primary); border-color: var(--blue-dim); }
+
+.nav-tab.active {
+  color: #fff;
+  background: var(--blue-dim);
+  border-color: var(--blue);
+  box-shadow: 0 0 10px var(--blue-glow);
+}
+
+/* ── Formulário de criação ── */
+.user-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.u-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.u-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue-glow);
+}
+
+.u-input::placeholder { color: var(--text-muted); }
+
+.u-role {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.u-role input { width: 15px; height: 15px; accent-color: var(--blue); cursor: pointer; }
+
+/* ── Botões do painel ── */
+.btn-user {
+  padding: 7px 12px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-user:hover { border-color: var(--blue); color: #fff; }
+
+.btn-user.primary {
+  background: var(--blue-dim);
+  border-color: var(--blue);
+  color: #fff;
+}
+.btn-user.primary:hover { background: #2299ff; }
+
+.btn-user.danger:hover { border-color: var(--red); color: var(--red); }
+
+.btn-refresh {
+  padding: 3px 9px;
+  font-size: 14px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-refresh:hover { color: var(--blue); border-color: var(--blue); }
+
+/* ── Mensagens ── */
+.u-msg {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  margin-top: 6px;
+  min-height: 13px;
+  color: var(--text-muted);
+}
+.u-msg.ok   { color: var(--green); }
+.u-msg.err  { color: var(--red); }
+.u-msg.info { color: var(--blue); }
+
+/* ── Lista ── */
+.user-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.user-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.u-loading {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 10px 0;
+}
+
+.u-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  padding: 8px 10px;
+  transition: border-color 0.2s;
+}
+.u-item:hover { border-color: var(--blue-dim); }
+
+.u-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.u-main { min-width: 0; flex: 1; }
+
+.u-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.u-path {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.u-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ── Badges de cargo/estado ── */
+.u-badge {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--bg-card);
+  white-space: nowrap;
+}
+.u-badge.admin { color: var(--blue);   border-color: var(--blue-dim);   background: rgba(26,143,255,0.1); }
+.u-badge.lock  { color: var(--yellow); border-color: var(--yellow);     background: rgba(245,158,11,0.1); }
+.u-badge.on    { color: var(--green);  border-color: var(--green);      background: var(--green-glow); }
+.u-badge.off   { color: var(--red);    border-color: var(--red);        background: rgba(239,68,68,0.1); }
+
+/* ── Painel inline (editar/excluir) ── */
+.u-panel:empty { display: none; }
+
+.u-edit, .u-del {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  animation: fadeInUp 0.25s ease;
+}
+
+.u-edit-title, .u-del-title {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.u-del-title strong { color: var(--red); }
+
+.u-edit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ============================================
+   Desinstalar Programas (v3.0)
+   ============================================ */
+.prog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.prog-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--blue);
+}
+
+/* Lista com scroll interno (pode ter 100+ programas) */
+.prog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.prog-list::-webkit-scrollbar { width: 5px; }
+.prog-list::-webkit-scrollbar-track { background: transparent; }
+.prog-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.prog-item {
+  padding: 7px 9px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  transition: border-color 0.2s, background 0.2s;
+}
+.prog-item:hover    { border-color: var(--blue-dim); }
+.prog-item.finished { border-color: var(--green); background: rgba(34,197,94,0.06); }
+
+.prog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prog-check-wrap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  min-width: 0;
+  flex: 1;
+}
+
+.prog-cb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  position: relative;
+  background: var(--bg-card);
+  transition: all 0.2s;
+}
+.prog-cb:checked { background: var(--blue); border-color: var(--blue); box-shadow: 0 0 8px var(--blue-glow); }
+.prog-cb:checked::after {
+  content: '✔';
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 10px; color: #fff;
+}
+
+.prog-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prog-status {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.prog-status.downloading { color: var(--blue); }
+.prog-status.installing  { color: var(--yellow); }
+.prog-status.done        { color: var(--green); font-weight: 600; }
+.prog-status.error       { color: var(--red); }
+
+.prog-meta {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  margin: 3px 0 0 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prog-bar-wrap {
+  width: 100%;
+  height: 3px;
+  background: var(--bg-card);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 5px;
+}
+.prog-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: var(--border);
+  transition: width 0.4s ease, background 0.3s;
+}
+.prog-bar.downloading { background: linear-gradient(90deg, var(--blue-dim), var(--blue)); }
+.prog-bar.installing  { background: linear-gradient(90deg, #b45309, var(--yellow)); animation: pulse-yellow 0.8s ease-in-out infinite; }
+.prog-bar.done        { background: linear-gradient(90deg, #16a34a, var(--green)); }
+.prog-bar.error       { background: var(--red); }
+
+/* Botão de desinstalar (vermelho) */
+.btn-uninstall {
+  background: var(--red);
+  box-shadow: 0 4px 18px rgba(239,68,68,0.35);
+}
+.btn-uninstall:hover:not(:disabled) {
+  background: #f75c5c;
+  box-shadow: 0 6px 24px rgba(239,68,68,0.5);
 }

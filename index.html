@@ -21,10 +21,20 @@
         </div>
         <h1 class="app-title">Agente Blue</h1>
         <p class="app-subtitle">Configuração Automática de Estações Windows</p>
-        <p class="app-version">v2.0 — BlueControl IT</p>
+        <p class="app-version">v2.0.1 — BlueControl IT</p>
       </div>
 
-      <!-- Opções -->
+      <!-- Navegação entre Setup e Gerenciar Usuários -->
+      <div class="nav-tabs">
+        <button class="nav-tab active" id="tab-setup" onclick="showView('main')">Setup</button>
+        <button class="nav-tab" id="tab-users" onclick="showView('users')">Usuários</button>
+        <button class="nav-tab" id="tab-programs" onclick="showView('programs')">Programas</button>
+      </div>
+
+      <!-- ══════════ VIEW: SETUP ══════════ -->
+      <div id="viewMain">
+
+      <!-- Opções -->/
       <div class="card opt-card">
         <p class="card-label">Opções de Execução</p>
         <div class="opt-row">
@@ -51,19 +61,8 @@
 
         <div class="opt-row" style="margin-top: 12px;">
           <div class="opt-info">
-            <span class="opt-title">Impressora de Rede</span>
-            <span class="opt-desc">RICOH MP C3003 (IP direto)</span>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="chkImpressora" checked>
-            <span class="slider"></span>
-          </label>
-        </div>
-
-        <div class="opt-row" style="margin-top: 12px;">
-          <div class="opt-info">
             <span class="opt-title">Verificação de Integridade</span>
-            <span class="opt-desc">SFC + DISM ao final (pode demorar)</span>
+            <span class="opt-desc">SFC ao final (modo rápido; DISM no modo completo)</span>
           </div>
           <label class="switch">
             <input type="checkbox" id="chkIntegridade" checked>
@@ -115,14 +114,6 @@
               <strong>Usuários</strong> — Criação de Suporte e Administrador
             </span>
             <span class="step-badge" id="badge-usuarios">Pendente</span>
-          </div>
-
-          <div class="module-item" id="step-impressora">
-            <span class="custom-radio" id="radio-impressora"></span>
-            <span class="module-text">
-              <strong>Impressora</strong> — RICOH MP C3003 na rede
-            </span>
-            <span class="step-badge" id="badge-impressora">Pendente</span>
           </div>
 
           <div class="module-item" id="step-otimizacao">
@@ -256,20 +247,81 @@
         <p class="progress-label" id="progressLabel">Aguardando execução...</p>
       </div>
 
-      <!-- Log de saída -->
-      <div class="log-box" id="logBox">
-        <span class="log-placeholder">Os logs de execução aparecerão aqui.</span>
-      </div>
-
       <!-- Botão de execução -->
       <button class="btn-executar" id="btnExecutar" onclick="iniciarAgente()">
         ▶ &nbsp;EXECUTAR SETUP
       </button>
 
+      </div><!-- /viewMain -->
+
+      <!-- ══════════ VIEW: GERENCIAR USUÁRIOS ══════════ -->
+      <div id="viewUsers" style="display:none;">
+
+        <!-- Criar usuário -->
+        <div class="card">
+          <p class="card-label">Criar Usuário</p>
+          <div class="user-form">
+            <input id="nu-nome" class="u-input" placeholder="Nome do usuário" maxlength="20" autocomplete="off">
+            <input id="nu-senha" class="u-input" type="password" placeholder="Senha (opcional)" autocomplete="new-password">
+            <label class="u-role">
+              <input type="checkbox" id="nu-admin">
+              <span>Administrador</span>
+            </label>
+            <button class="btn-user primary" onclick="criarUsuario()">Criar usuário</button>
+          </div>
+          <p class="u-msg" id="nu-msg"></p>
+        </div>
+
+        <!-- Lista de usuários -->
+        <div class="card">
+          <div class="user-list-head">
+            <p class="card-label" style="margin:0;">Usuários da Máquina</p>
+            <button class="btn-refresh" onclick="carregarUsuarios()" title="Atualizar lista">↻</button>
+          </div>
+          <div id="user-list" class="user-list">
+            <p class="u-loading">Carregando…</p>
+          </div>
+        </div>
+
+      </div><!-- /viewUsers -->
+
+      <!-- ══════════ VIEW: DESINSTALAR PROGRAMAS ══════════ -->
+      <div id="viewPrograms" style="display:none;">
+
+        <div class="card">
+          <input id="prog-search" class="u-input" placeholder="🔎 Filtrar por nome ou fabricante…" oninput="filtrarProgramas()" autocomplete="off">
+          <div class="prog-actions">
+            <label class="u-role">
+              <input type="checkbox" id="prog-all" onchange="marcarTodos(this.checked)">
+              <span>Selecionar todos (visíveis)</span>
+            </label>
+            <span class="prog-count" id="prog-count">0 selecionados</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="user-list-head">
+            <p class="card-label" style="margin:0;">Programas Instalados</p>
+            <button class="btn-refresh" onclick="carregarProgramas()" title="Atualizar lista">↻</button>
+          </div>
+          <div id="prog-list" class="prog-list">
+            <p class="u-loading">Carregando…</p>
+          </div>
+        </div>
+
+        <button class="btn-executar btn-uninstall" id="btnDesinstalar" onclick="desinstalarSelecionados()" disabled>
+          DESINSTALAR SELECIONADOS
+        </button>
+        <p class="u-msg" id="prog-msg"></p>
+
+      </div><!-- /viewPrograms -->
+
     </div>
   </div>
 
   <script src="script.js"></script>
+  <script src="usuarios.js"></script>
+  <script src="programas.js"></script>
 </body>
 
 </html>

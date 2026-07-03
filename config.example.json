@@ -12,14 +12,6 @@
     { "nome": "Administrador", "senha": "DEFINA_A_SENHA", "admin": true, "builtin_admin": true  }
   ],
 
-  "impressora": {
-    "_comentario": "Impressora de rede instalada por IP direto. Preencha 'ip' com o endereço da impressora. Deixe 'habilitar' como false para pular esta etapa.",
-    "habilitar": true,
-    "nome": "RICOH MP C3003",
-    "ip": "192.168.1.90",
-    "padrao": true
-  },
-
   "integridade": {
     "_comentario": "Verificação de integridade ao final. modo='rapido' (só sfc /scannow, recomendado) ou 'completo' (DISM RestoreHealth + sfc, bem mais lento).",
     "habilitar": true,
@@ -34,7 +26,8 @@
       "args": "--install \"C:\\Program Files (x86)\\AnyDesk\" --silent --start-with-win --create-shortcuts --create-desktop-icon",
       "ok_codes": [0, 11],
       "detect": "C:\\Program Files (x86)\\AnyDesk\\AnyDesk.exe",
-      "firewall": true
+      "firewall": true,
+      "unattended_password": "DEFINA_A_SENHA_AQUI"
     },
     {
       "nome": "Google Chrome",
@@ -47,7 +40,7 @@
     {
       "nome": "Adobe Acrobat Reader",
       "metodo": "local",
-      "filename": "Reader_br_install.exe",
+      "filename": "reader_br_R9BVLF8K_install.exe",
       "args": "",
       "ok_codes": [0, 3010],
       "detect": "C:\\Program Files\\Adobe\\Acrobat DC\\Acrobat\\Acrobat.exe"
