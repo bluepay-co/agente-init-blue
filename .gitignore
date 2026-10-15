@@ -1,18 +1,60 @@
-# Byte-compiled / optimized / DLL files
+# ─────────────────────────────────────────────
+#  SEGREDOS — nada daqui pode ir para o GitHub
+# ─────────────────────────────────────────────
+# Configuração real do agente: senhas de administrador, dos usuários locais e
+# do AnyDesk. Use config.example.json como modelo.
+config.json
+config.*.json
+!config.example.json
+
+# Variáveis de ambiente e credenciais avulsas
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+credenciais*
+senhas*
+
+# ─────────────────────────────────────────────
+#  INSTALADORES
+# ─────────────────────────────────────────────
+# Os instaladores das versões homologadas FICAM no repositório de propósito:
+# são builds específicos (Reader br, WinRAR br, OfficeSetup) que não se
+# reobtêm idênticos depois, e sem eles um clone não compila.
+#
+# Exceção: os que passam de 100 MB, limite de arquivo do GitHub. Esses são
+# baixados à parte — veja installers/README.md.
+installers/GoogleDriveSetup.exe
+installers/SlackSetup.exe
+
+# ─────────────────────────────────────────────
+#  ARTEFATOS DE BUILD
+# ─────────────────────────────────────────────
+dist/
+build/AgenteBlue/
+build/*.toc
+build/*.pkg
+build/*.pyz
+build_log.txt
+*.manifest
+
+# PyInstaller: versionamos apenas o nosso .spec
+*.spec
+!build/AgenteBlue.spec
+
+# ─────────────────────────────────────────────
+#  PYTHON
+# ─────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
 develop-eggs/
-downloads/
 eggs/
 sdist/
-var/
 wheels/
 share/python-wheels/
 *.egg-info/
@@ -20,44 +62,33 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# PyInstaller
-*.manifest
-*.spec
-!AgenteBlue.spec
-
-# Artefatos de build do PyInstaller
-build/AgenteBlue/
-build_log.txt
-
-# Logs
-*.log
-
-# Environments
+# Ambientes virtuais
 .venv/
-env/
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
 
-# IDEs
+# ─────────────────────────────────────────────
+#  ESPECÍFICO DO AGENTE BLUE
+# ─────────────────────────────────────────────
+# Papel de parede: imagem pesada e específica de cada cliente.
+assets/Fundo de Tela.*
+
+# Logs do agente
+*.log
+
+# ─────────────────────────────────────────────
+#  FERRAMENTAS E SISTEMA OPERACIONAL
+# ─────────────────────────────────────────────
 .vscode/
 .idea/
-
-# Agent Blue Specific
-Fundo de Tela.jpg
-
-# Configuração com segredos (senhas) — NÃO versionar.
-# Use config.example.json como modelo e crie seu config.json local.
-config.json
-
-# Instaladores grandes (>100 MB) — passam do limite do GitHub.
-# Mantenha-os na pasta .exe local; o build os embute a partir dela.
-.exe/GoogleDriveSetup.exe
-.exe/SlackSetup.exe
-
-# Build output (exe grande, distribuido fora do GitHub)
-dist/
-
-# Config local do Claude Code
 .claude/
+Thumbs.db
+desktop.ini
+ehthumbs.db
+.DS_Store
+*~
+*.tmp
+*.bak
