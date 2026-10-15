@@ -54,11 +54,8 @@ from version import __version__
 # ─────────────────────────────────────────────
 #  CAMINHOS
 # ─────────────────────────────────────────────
-# _BASE_DIR  → raiz "externa": pasta do .exe quando compilado, raiz do
-#              repositório em desenvolvimento (este arquivo vive em src/).
-#              É onde o técnico edita config.json e popula installers/.
-# _BUNDLE_DIR→ cópia embutida no executável (_MEIPASS no onefile). Serve de
-#              fallback quando o arquivo não existe solto ao lado do .exe.
+# _BASE_DIR: raiz externa e editável (pasta do .exe, ou do repositório em dev).
+# _BUNDLE_DIR: cópia embutida no executável, usada como fallback.
 if getattr(sys, "frozen", False):
     _BASE_DIR = Path(sys.executable).resolve().parent
     _BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", _BASE_DIR))
@@ -82,11 +79,8 @@ def _resolver(rel: str) -> Optional[Path]:
 
 # ─────────────────────────────────────────────
 #  CONFIGURAÇÃO EXTERNA (config.json)
-#    Credenciais, usuários e softwares ficam fora do código-fonte (e, por
-#    padrão, fora do .exe), num config.json editável na raiz / ao lado do
-#    agente. Assim o técnico ajusta tudo sem recompilar e nada sensível fica
-#    embutido no binário.
-#    Procura nesta ordem: raiz externa → cópia embutida (_MEIPASS).
+#    Credenciais, usuários e softwares ficam fora do código e, por padrão,
+#    fora do .exe: o técnico ajusta tudo sem recompilar.
 # ─────────────────────────────────────────────
 
 def _boot_print(msg: str) -> None:
@@ -203,16 +197,9 @@ SOFTWARES: List[dict] = _normalizar_softwares(_CONFIG.get("softwares", []))
 # ─────────────────────────────────────────────
 #  TOKEN DA API
 #    O agente roda como Administrador e expõe rotas que criam usuários e
-#    desinstalam programas. Sem proteção, QUALQUER página aberta no navegador
-#    da máquina poderia chamá-las (o navegador envia a requisição por ela).
-#
-#    Proteção, sem pedir nada ao técnico:
-#      • token aleatório novo a cada execução, só vive em memória;
-#      • a janela do agente recebe o token na própria URL de abertura e o
-#        reenvia em cada chamada (header X-Agente-Token; no SSE, query ?t=);
-#      • outra aba/página não conhece o token → 403.
-#    Também conferimos Host e Origin para barrar DNS rebinding e chamadas
-#    vindas de um site externo.
+#    desinstalam programas. Sem token, qualquer página aberta no navegador da
+#    máquina poderia chamá-las. O token é sorteado a cada execução, vive só em
+#    memória e chega à janela pela URL de abertura.
 # ─────────────────────────────────────────────
 _API_TOKEN: str = secrets.token_urlsafe(32)
 
@@ -296,9 +283,8 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
                                      f"http://localhost:{self.server.server_port}"):
             return False
 
-        # 3. Token da sessão (comparação em tempo constante). Comparamos em
-        #    bytes: compare_digest recusa str com caracteres não-ASCII, e o
-        #    token chega de fora — um acentuado não pode virar erro 500.
+        # 3. Token, em tempo constante. Em bytes porque compare_digest recusa
+        #    str não-ASCII, e um token acentuado não pode virar erro 500.
         recebido = self._token_recebido().encode("utf-8", "replace")
         return secrets.compare_digest(recebido, _API_TOKEN.encode("utf-8"))
 
@@ -315,13 +301,10 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
         if self._rota() == "/api/stream":
             self._handle_sse()
         elif self._rota() == "/api/version":
-            # Fonte única da versão: src/version.py. A UI lê daqui no load.
             self._json_response({"versao": __version__})
         elif self._rota() == "/api/usuarios/listar":
-            # Gerenciar Usuários: retorna a lista de usuários locais reais.
             self._json_response(usuarios.listar())
         elif self._rota() == "/api/programas/listar":
-            # Desinstalar Programas: lista programas desktop + apps da Store.
             self._json_response(programas.listar())
         else:
             super().do_GET()
@@ -356,7 +339,6 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             ).start()
             self._json_response({"ok": True})
 
-        # ── Gerenciar Usuários (v3.0) ─────────────────────────────────────────
         elif self._rota() == "/api/usuarios/criar":
             p = self._read_json_body()
             self._json_response(usuarios.criar(
@@ -372,7 +354,6 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response(usuarios.excluir(
                 p.get("sid", ""), bool(p.get("apagar_perfil", False))))
 
-        # ── Desinstalar Programas (v3.0) ──────────────────────────────────────
         elif self._rota() == "/api/programas/desinstalar":
             p = self._read_json_body()
             ids = p.get("ids", [])
@@ -439,7 +420,6 @@ def _segredos_conhecidos() -> List[str]:
     valores = [_ADMIN_PASS]
     valores += [u.get("senha", "") for u in USUARIOS]
     valores += [a.get("unattended_password", "") for a in SOFTWARES]
-    # Senhas muito curtas dariam falso positivo em texto comum.
     return [v for v in valores if v and len(v) >= 4]
 
 
@@ -506,11 +486,9 @@ def elevate_and_restart() -> None:
         sys.exit(1)
 
     if getattr(sys, "frozen", False):
-        # Compilado: relança o próprio .exe (sem argumento de script).
         target = sys.executable
         arglist = ""
     else:
-        # Dev: relança "python agente.py".
         target = sys.executable
         script = str(Path(__file__).resolve())
         arglist = f"-ArgumentList '\"{esc(script)}\"' "
@@ -567,7 +545,6 @@ def _run_cmd(cmd: str, label: str = "", timeout: int = 300,
             else:
                 _log(f"  ✔  Código {result.returncode} → considerado sucesso (ex: já instalado)", "ok")
             return True
-        # Código de erro real
         for line in stderr_txt.strip().splitlines():
             if line.strip():
                 _log(f"     {line}", "warn")
@@ -583,11 +560,8 @@ def _run_cmd(cmd: str, label: str = "", timeout: int = 300,
 
 # ══════════════════════════════════════════════
 #  SCRIPTS COM CREDENCIAIS
-#  Algumas etapas precisam gerar um .ps1 que carrega senhas (criação de
-#  usuários, troca de senha). Esses arquivos vão para C:\ProgramData, que é
-#  LEGÍVEL POR QUALQUER USUÁRIO da máquina — um .ps1 esquecido ali entrega a
-#  senha do Administrador para qualquer conta local. Por isso o arquivo nasce
-#  com acesso restrito e é apagado assim que o comando termina.
+#  Os .ps1 que carregam senhas vão para C:\ProgramData, legível por qualquer
+#  conta da máquina. Por isso nascem restritos e são apagados após o uso.
 # ══════════════════════════════════════════════
 
 def _gravar_script_protegido(caminho: Path, conteudo: str) -> bool:
@@ -694,7 +668,6 @@ def _run_as_logged_user(cmd_path: str, label: str = "") -> bool:
     Usa /it (token interativo do usuário logado) — não exige senha."""
     info = _logged_user()
     if not info:
-        # Sem usuário resolvido: roda no contexto atual mesmo.
         return _run_cmd(f'"{cmd_path}"', label=label or "Executar script (contexto atual)")
 
     task = "AgenteBlue_UserApply"
@@ -725,7 +698,6 @@ def _refresh_user_session(restart_explorer: bool = False, clear_recycle: bool = 
         lines.append("start explorer.exe")
 
     if not info:
-        # Fallback (contexto atual): roda os comandos direto.
         _run_cmd('rundll32.exe user32.dll,UpdatePerUserSystemParameters 1, True',
                  label="Recarregar parâmetros do usuário")
         if clear_recycle:
@@ -893,10 +865,8 @@ def _instalar_via_local(app: dict) -> bool:
 
     suf = arquivo.suffix.lower()
     if suf in (".msix", ".msixbundle", ".appx", ".appxbundle"):
-        # Pacote MSIX/Appx: não roda como .exe. Provisiona para TODOS os usuários
-        # (contexto de Administrador, sem tarefa de usuário). Pacotes provisionados
-        # são instalados para cada usuário no próximo logon — ideal para máquinas
-        # recém-preparadas, em que os usuários novos recebem o app ao entrar.
+        # MSIX/Appx não roda como .exe: provisiona para todos os usuários, que
+        # recebem o app no próximo logon.
         ps = f"Add-AppxProvisionedPackage -Online -PackagePath '{arquivo}' -SkipLicense"
         cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "{ps}"'
     elif app.get("msi"):
@@ -920,21 +890,18 @@ def _etapa_downloads(sw_lista: list = None) -> bool:
     for app in SOFTWARES:
         nome = app["nome"]
 
-        # Filtro de seleção individual
         if sw_lista is not None and nome not in sw_lista:
             _log(f"  ⏭  {nome} não selecionado. Pulando...", "muted")
             continue
 
         _log(f"\n  → {nome}", "info")
 
-        # Já instalado? pula.
         detect = app.get("detect")
         if detect and Path(detect).exists():
             _log(f"  ✔  {nome} já está instalado no sistema. Pulando...", "ok")
             _sw_progress(nome, "ok", 100)
             continue
 
-        # Instala pelo método declarado.
         metodo = app.get("metodo")
         if metodo == "local":
             ok = _instalar_via_local(app)
@@ -967,11 +934,8 @@ def _etapa_downloads(sw_lista: list = None) -> bool:
             senha_anydesk = app.get("unattended_password")
             if senha_anydesk and detect:
                 _log("  🔑  Definindo senha de acesso não supervisionado do AnyDesk...", "muted")
-                # A senha é escrita no stdin do próprio AnyDesk. Antes isto era
-                # 'echo <senha>| AnyDesk --set-password' com shell=True, e a
-                # senha ficava visível na linha de comando do cmd.exe — tanto
-                # no Gerenciador de Tarefas quanto na auditoria de processos
-                # (evento 4688). Sem shell, nada disso é exposto.
+                # Pelo stdin, sem shell: na linha de comando a senha ficaria
+                # visível no Gerenciador de Tarefas e na auditoria (evento 4688).
                 try:
                     proc = subprocess.run(
                         [detect, "--set-password"],
@@ -998,10 +962,7 @@ def _etapa_downloads(sw_lista: list = None) -> bool:
 def _etapa_wallpaper() -> bool:
     _etapa_inicio("wallpaper", 30)
 
-    # ── Localizar arquivo embutido ou externo ────────────────────────────────
-    # Ordem por nome: 1) assets/ externo (editável sem recompilar)
-    #                 2) assets/ embutido no .exe (_BUNDLE_DIR / _MEIPASS)
-    #                 3) solto ao lado do .exe (layout antigo, compatibilidade)
+    # Fallback para o nome solto na raiz: layout anterior a v3.
     src: Optional[Path] = None
     for nome in _WALLPAPER_NAMES:
         cand = _resolver(f"assets/{nome}") or _resolver(nome)
@@ -1014,9 +975,8 @@ def _etapa_wallpaper() -> bool:
         _etapa_fim("wallpaper", False, 35)
         return False
 
-    # ── Copiar para local PERMANENTE e legível pelo usuário ──────────────────
-    # _MEIPASS é uma pasta temporária — o wallpaper precisa estar em disco fixo.
-    # ProgramData é legível por qualquer usuário (inclusive o logado não-admin).
+    # _MEIPASS é temporária e o wallpaper precisa de disco fixo; ProgramData
+    # é legível também pelo usuário logado não-admin.
     dest_dir = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / src.name
@@ -1040,7 +1000,6 @@ def _etapa_wallpaper() -> bool:
     _run_cmd(f'reg add "{reg_desk}" /v TileWallpaper /t REG_SZ /d 0 /f',
              label="Wallpaper: sem lado a lado")
 
-    # Aplica imediatamente no contexto do usuário logado.
     _refresh_user_session(restart_explorer=False)
 
     _etapa_fim("wallpaper", ok, 35)
@@ -1142,7 +1101,6 @@ def _etapa_smb() -> bool:
     ok_reg2 = _run_cmd(f'reg add "{base}" /v RequireSecuritySignature /t REG_DWORD /d 0 /f',
                        label="Registro: RequireSecuritySignature = 0")
 
-    # Sucesso da etapa = configuração aplicada no Registro (fonte da verdade).
     etapa_ok = ok_reg1 and ok_reg2
     _etapa_fim("smb", etapa_ok, 64)
     return etapa_ok
@@ -1162,7 +1120,6 @@ def _etapa_usuarios() -> bool:
         return True
 
     def _esc(s: str) -> str:
-        # Escapa aspas simples para literais de string do PowerShell.
         return s.replace("'", "''")
 
     linhas: List[str] = [
@@ -1327,7 +1284,6 @@ def _remover_onedrive() -> None:
         except Exception as exc:
             _log(f"  ⚠  Falha ao desinstalar OneDrive: {exc}", "warn")
     else:
-        # Sem usuário logado resolvido: roda no contexto atual (Administrator).
         _run_cmd("taskkill /f /im OneDrive.exe", label="Encerrar OneDrive")
         _run_cmd(f'"{setup}" /uninstall', label="Desinstalar OneDrive")
 
@@ -1377,14 +1333,8 @@ def _etapa_otimizacao() -> bool:
     # ── Acessibilidade > Efeitos Visuais: EFEITOS DE TRANSPARÊNCIA = OFF ──────
     _run_cmd(f'reg add "{themes}" /v EnableTransparency /t REG_DWORD /d 0 /f', label="Efeitos de transparência: OFF")
 
-    # ── Acessibilidade > Efeitos Visuais: EFEITOS DE ANIMAÇÃO = OFF ───────────
-    # Máxima eficiência: replica "Ajustar para melhor desempenho" do Windows.
-    #   • VisualFXSetting=2  → master "melhor desempenho"
-    #   • UserPreferencesMask 9012038010000000 → desliga fades/animações de
-    #     menus, controles, listas etc. (é o que o Windows grava nesse modo)
-    #   • MinAnimate=0       → animação de minimizar/maximizar janela
-    #   • TaskbarAnimations=0→ animações da barra de tarefas
-    #   • ListviewAlphaSelect / ListviewShadow=0 → seleção translúcida e sombras
+    # Replica "Ajustar para melhor desempenho": VisualFXSetting=2 é o master e
+    # UserPreferencesMask 9012038010000000 é a máscara que o Windows grava nesse modo.
     _run_cmd(f'reg add "{visualfx}" /v VisualFXSetting /t REG_DWORD /d 2 /f', label="Efeitos visuais: melhor desempenho")
     _run_cmd(f'reg add "{desktop}" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f', label="Efeitos de animação: OFF (máscara)")
     _run_cmd(f'reg add "{winmetrics}" /v MinAnimate /t REG_SZ /d 0 /f', label="Animação de janela: OFF")
@@ -1393,26 +1343,17 @@ def _etapa_otimizacao() -> bool:
     _run_cmd(f'reg add "{advanced}" /v ListviewAlphaSelect /t REG_DWORD /d 0 /f', label="Seleção translúcida: OFF")
     _run_cmd(f'reg add "{advanced}" /v ListviewShadow /t REG_DWORD /d 0 /f', label="Sombras de ícones: OFF")
 
-    # ── Modo escuro (sistema + apps) ─────────────────────────────────────────
     _run_cmd(f'reg add "{themes}" /v SystemUsesLightTheme /t REG_DWORD /d 0 /f', label="Modo escuro (sistema)")
     _run_cmd(f'reg add "{themes}" /v AppsUseLightTheme /t REG_DWORD /d 0 /f', label="Modo escuro (apps)")
 
-    # ── Personalização > Barra de Tarefas ────────────────────────────────────
-    #   • SearchboxTaskbarMode=0 → SEMPRE ocultar a Pesquisa
-    #   • ShowTaskViewButton=0   → ocultar Visão de Tarefas
-    #   • TaskbarDa=0            → ocultar Widgets (por usuário)
-    #   • Dsh\AllowNewsAndInterests=0 → desativa Widgets a nível de máquina (reforço)
+    # ── Barra de tarefas: oculta Pesquisa, Visão de Tarefas e Widgets ────────
     _run_cmd(f'reg add "{search}" /v SearchboxTaskbarMode /t REG_DWORD /d 0 /f', label="Pesquisa na barra: SEMPRE oculta")
     _run_cmd(f'reg add "{advanced}" /v ShowTaskViewButton /t REG_DWORD /d 0 /f', label="Visão de Tarefas: OFF")
     _run_cmd(f'reg add "{advanced}" /v TaskbarDa /t REG_DWORD /d 0 /f', label="Widgets: OFF (usuário)")
     _run_cmd(r'reg add "HKLM\SOFTWARE\Policies\Microsoft\Dsh" /v AllowNewsAndInterests /t REG_DWORD /d 0 /f', label="Widgets: OFF (máquina)")
 
-    # ── Outros ───────────────────────────────────────────────────────────────
-    # Mostrar PERCENTUAL DA BATERIA na barra de tarefas (notebooks)
     _run_cmd(f'reg add "{advanced}" /v IsBatteryPercentageEnabled /t REG_DWORD /d 1 /f', label="Mostrar % da bateria")
-    # Apps em segundo plano desativados
     _run_cmd(f'reg add "{bgapps}" /v GlobalUserDisabled /t REG_DWORD /d 1 /f', label="Desativar apps em segundo plano")
-    # Sensor de Armazenamento (limpeza automática)
     _run_cmd(f'reg add "{storage}" /v 01 /t REG_DWORD /d 1 /f', label="Ativar Storage Sense")
     acoes_ok += 1
 
@@ -1454,7 +1395,6 @@ def _etapa_otimizacao() -> bool:
         if os.path.isdir(folder):
             _log(f"     • {desc}", "muted")
             _wipe(folder)
-    # Cache de resolução DNS
     _run_cmd("ipconfig /flushdns", label="Limpar cache DNS", timeout=20)
     acoes_ok += 1
 
@@ -1466,9 +1406,7 @@ def _etapa_otimizacao() -> bool:
     acoes_ok += 1
 
     # ── 5.1. Otimização do disco do sistema (TRIM em SSD / desfrag em HD) ──────
-    # Optimize-Volume detecta o tipo de mídia automaticamente:
-    #   • SSD  → envia comandos TRIM/ReTrim (não desfragmenta, preserva a vida útil)
-    #   • HD   → desfragmenta de fato
+    # Optimize-Volume detecta a mídia: TRIM em SSD, desfragmentação em HD.
     _log("  > Otimizando o disco do sistema (C:)...", "muted")
     if _run_cmd(
         'powershell -NoProfile -ExecutionPolicy Bypass -Command "Optimize-Volume -DriveLetter C -Verbose"',
@@ -1530,7 +1468,6 @@ def _etapa_integridade() -> bool:
     else:
         _log("  ⚡  Modo RÁPIDO (apenas SFC). Para reparo profundo, use modo 'completo'.", "muted")
 
-    # SFC repara arquivos protegidos do sistema.
     _log("\n  > sfc /scannow ...", "muted")
     # sfc retorna 0 quando não há violações; outros códigos indicam reparos/erros.
     if not _run_cmd("sfc /scannow", label="SFC ScanNow", timeout=1800):
@@ -1556,7 +1493,6 @@ def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
     _log(f"  Log completo: {_LOG_FILE}", "muted")
     _log("=" * 52, "muted")
 
-    # Etapa 1: Downloads (Opcional)
     if instalar_softwares:
         if not _etapa_downloads(sw_lista):
             erros.append("downloads")
@@ -1572,11 +1508,9 @@ def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
     if not _etapa_smb():
         erros.append("smb")
 
-    # Criação de usuários locais (sempre executada)
     if not _etapa_usuarios():
         erros.append("usuarios")
 
-    # Otimização (Opcional)
     if otimizacao:
         _etapa_otimizacao()
     else:
@@ -1584,7 +1518,6 @@ def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
         _etapa_inicio("otimizacao", 82)
         _etapa_fim("otimizacao", True, 90)
 
-    # Etapa Final: Verificação de Integridade (Opcional, "após execução")
     if verificar_integridade:
         if not _etapa_integridade():
             erros.append("integridade")
@@ -1650,7 +1583,6 @@ def main() -> None:
 
     log.info("✔  Rodando como Administrador.")
 
-    # Injeta os helpers compartilhados nos módulos locais (evita import circular).
     usuarios.init(_log, _logged_user, _NO_WINDOW,
                   _gravar_script_protegido, _apagar_script)
     programas.init(_log, _broadcast, _logged_user, _NO_WINDOW)
@@ -1660,8 +1592,7 @@ def main() -> None:
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
 
-    # O token viaja na URL de abertura; a interface o guarda e reenvia
-    # em cada chamada. Nenhuma outra página do navegador o conhece.
+    # O token viaja na URL de abertura: só esta janela passa a conhecê-lo.
     url = f"http://127.0.0.1:{port}/index.html?t={_API_TOKEN}"
     log.info(f"Servidor local em: {url}")
     _open_app_window(url)

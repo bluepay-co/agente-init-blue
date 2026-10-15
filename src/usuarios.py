@@ -49,7 +49,6 @@ def init(log, logged_user, no_window, gravar_script_protegido, apagar_script):
     _log = log
     _logged_user = logged_user
     _NO_WINDOW = no_window
-    # Gravação/remoção protegida dos .ps1 que carregam senha (ver agente.py).
     _gravar_script_protegido = gravar_script_protegido
     _apagar_script = apagar_script
 
@@ -69,9 +68,8 @@ def _psq(s: str) -> str:
 def _run_ps(script: str, timeout: int = 120) -> tuple:
     """Grava o script num .ps1 e executa. Retorna (returncode, stdout, stderr).
 
-    Operações de usuário carregam senha em claro, e o .ps1 fica em
-    C:\\ProgramData, legível por qualquer conta da máquina. Por isso o arquivo
-    nasce restrito a administradores e é apagado ao fim — sempre."""
+    O arquivo carrega senha em claro: nasce restrito a administradores e é
+    apagado ao fim (ver _gravar_script_protegido no agente)."""
     ps_file = _script_dir() / "usuarios_op.ps1"
     if not _gravar_script_protegido(ps_file, script):
         return 1, "", "Falha ao preparar o script da operação."
