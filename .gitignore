@@ -25,9 +25,9 @@ MANIFEST
 *.spec
 !AgenteBlue.spec
 
-# Installer Files (Heavy)
-apps/
-AGENTE_FINAL/
+# Artefatos de build do PyInstaller
+build/AgenteBlue/
+build_log.txt
 
 # Logs
 *.log
@@ -58,3 +58,6 @@ config.json
 
 # Build output (exe grande, distribuido fora do GitHub)
 dist/
+
+# Config local do Claude Code
+.claude/
