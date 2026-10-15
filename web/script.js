@@ -307,3 +307,12 @@ document.getElementById('chkIntegridade').addEventListener('change', (e) => {
   const step = document.getElementById('step-integridade');
   step.style.opacity = e.target.checked ? '1' : '0.4';
 });
+
+// ── Versão do agente (fonte única: src/version.py) ──
+fetch('/api/version')
+  .then((r) => r.json())
+  .then((d) => {
+    const el = document.getElementById('appVersion');
+    if (el && d.versao) el.textContent = `v${d.versao} — BlueControl IT`;
+  })
+  .catch(() => { /* sem versão: mantém o texto padrão do HTML */ });

@@ -47,6 +47,7 @@ from typing import Optional, List
 
 import usuarios  # módulo local: painel Gerenciar Usuários
 import programas  # módulo local: desinstalador em lote
+from version import __version__
 
 # ─────────────────────────────────────────────
 #  CAMINHOS
@@ -250,6 +251,9 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/stream":
             self._handle_sse()
+        elif self.path == "/api/version":
+            # Fonte única da versão: src/version.py. A UI lê daqui no load.
+            self._json_response({"versao": __version__})
         elif self.path == "/api/usuarios/listar":
             # Gerenciar Usuários: retorna a lista de usuários locais reais.
             self._json_response(usuarios.listar())
@@ -1479,7 +1483,8 @@ def _open_app_window(url: str):
 
 def main() -> None:
     log.info("=" * 52)
-    log.info("  AGENTE BLUE  —  " + datetime.now().strftime("%d/%m/%Y  %H:%M:%S"))
+    log.info(f"  AGENTE BLUE  v{__version__}  —  "
+             + datetime.now().strftime("%d/%m/%Y  %H:%M:%S"))
     log.info("=" * 52)
 
     if not is_admin():
