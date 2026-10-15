@@ -67,8 +67,8 @@ else:
     _BUNDLE_DIR = _BASE_DIR
 
 _WEB_DIR = _BASE_DIR / "web"            # interface servida pelo HTTP local
-_ASSETS_DIR = _BASE_DIR / "assets"      # ícone e papel de parede
 _EXE_DIR = _BASE_DIR / "installers"     # instaladores locais (Chrome, Office, …)
+# O ícone e o wallpaper ficam em assets/ e são buscados via _resolver().
 
 
 def _resolver(rel: str) -> Optional[Path]:
@@ -434,7 +434,31 @@ def _find_free_port() -> int:
 #  EMISSÃO DE EVENTOS
 # ══════════════════════════════════════════════
 
+def _segredos_conhecidos() -> List[str]:
+    """Todas as senhas que o config.json carrega. Usadas só para mascarar."""
+    valores = [_ADMIN_PASS]
+    valores += [u.get("senha", "") for u in USUARIOS]
+    valores += [a.get("unattended_password", "") for a in SOFTWARES]
+    # Senhas muito curtas dariam falso positivo em texto comum.
+    return [v for v in valores if v and len(v) >= 4]
+
+
+def _mascarar(msg: str) -> str:
+    """Troca qualquer senha conhecida por ***.
+
+    Rede de segurança: o log vai para disco e para a interface, e um comando
+    registrado sem rótulo (_run_cmd usa o próprio comando quando não recebe
+    label) poderia levar junto uma senha. Mascarar aqui cobre todos os
+    caminhos de saída de uma vez.
+    """
+    for segredo in _segredos_conhecidos():
+        if segredo in msg:
+            msg = msg.replace(segredo, "***")
+    return msg
+
+
 def _log(msg: str, tipo: str = "muted"):
+    msg = _mascarar(msg)
     _broadcast({"type": "log", "msg": msg, "tipo": tipo})
     log.info(msg)
 
@@ -555,6 +579,59 @@ def _run_cmd(cmd: str, label: str = "", timeout: int = 300,
     except Exception as exc:
         _log(f"  ✗  Exceção: {exc}", "err")
         return False
+
+
+# ══════════════════════════════════════════════
+#  SCRIPTS COM CREDENCIAIS
+#  Algumas etapas precisam gerar um .ps1 que carrega senhas (criação de
+#  usuários, troca de senha). Esses arquivos vão para C:\ProgramData, que é
+#  LEGÍVEL POR QUALQUER USUÁRIO da máquina — um .ps1 esquecido ali entrega a
+#  senha do Administrador para qualquer conta local. Por isso o arquivo nasce
+#  com acesso restrito e é apagado assim que o comando termina.
+# ══════════════════════════════════════════════
+
+def _gravar_script_protegido(caminho: Path, conteudo: str) -> bool:
+    """Grava um script que contém credenciais, acessível só a administradores.
+
+    utf-8-sig (BOM) garante leitura correta de acentos pelo PowerShell 5.1.
+    Os SIDs são usados no lugar dos nomes dos grupos para funcionar em Windows
+    de qualquer idioma: S-1-5-32-544 = Administradores, S-1-5-18 = SYSTEM.
+    """
+    try:
+        caminho.write_text(conteudo, encoding="utf-8-sig")
+    except Exception as exc:
+        _log(f"  ✗  Falha ao gerar {caminho.name}: {exc}", "err")
+        return False
+
+    # /inheritance:r descarta as permissões herdadas de ProgramData (que dão
+    # leitura a Users); /grant:r substitui a lista pelo que vem a seguir.
+    try:
+        subprocess.run(
+            f'icacls "{caminho}" /inheritance:r '
+            f'/grant:r "*S-1-5-32-544:(F)" "*S-1-5-18:(F)"',
+            shell=True, capture_output=True, timeout=30, creationflags=_NO_WINDOW,
+        )
+    except Exception as exc:
+        # Sem ACL o script ainda funciona, mas fica legível — avisa e segue.
+        _log(f"  ⚠  Não foi possível restringir o acesso a {caminho.name}: {exc}", "warn")
+    return True
+
+
+def _apagar_script(caminho: Path) -> None:
+    """Apaga um script que continha credenciais, sobrescrevendo o conteúdo
+    antes de remover para não deixar a senha legível no espaço livre."""
+    try:
+        if not caminho.exists():
+            return
+        tamanho = caminho.stat().st_size
+        with open(caminho, "r+b") as fh:
+            fh.write(b"\x00" * tamanho)
+            fh.flush()
+            os.fsync(fh.fileno())
+        caminho.unlink()
+    except Exception as exc:
+        _log(f"  ⚠  Não foi possível remover {caminho.name}: {exc}", "warn")
+
 
 # ══════════════════════════════════════════════
 #  CONTEXTO DO USUÁRIO LOGADO
@@ -890,12 +967,24 @@ def _etapa_downloads(sw_lista: list = None) -> bool:
             senha_anydesk = app.get("unattended_password")
             if senha_anydesk and detect:
                 _log("  🔑  Definindo senha de acesso não supervisionado do AnyDesk...", "muted")
-                # A senha vai por stdin (echo | AnyDesk --set-password), então
-                # nunca aparece na linha de comando/logs de processo.
-                _run_cmd(
-                    f'echo {senha_anydesk}| "{detect}" --set-password',
-                    label="AnyDesk: senha de acesso não supervisionado", timeout=30,
-                )
+                # A senha é escrita no stdin do próprio AnyDesk. Antes isto era
+                # 'echo <senha>| AnyDesk --set-password' com shell=True, e a
+                # senha ficava visível na linha de comando do cmd.exe — tanto
+                # no Gerenciador de Tarefas quanto na auditoria de processos
+                # (evento 4688). Sem shell, nada disso é exposto.
+                try:
+                    proc = subprocess.run(
+                        [detect, "--set-password"],
+                        input=f"{senha_anydesk}\n".encode("utf-8"),
+                        capture_output=True, timeout=30, creationflags=_NO_WINDOW,
+                    )
+                    if proc.returncode == 0:
+                        _log("  ✔  Senha do AnyDesk definida.", "ok")
+                    else:
+                        _log(f"  ⚠  AnyDesk retornou código {proc.returncode} "
+                             "ao definir a senha.", "warn")
+                except Exception as exc:
+                    _log(f"  ⚠  Falha ao definir a senha do AnyDesk: {exc}", "warn")
         else:
             _log(f"  ⚠  Instalação de {nome} pode ter falhado (verifique o log).", "warn")
             _sw_progress(nome, "erro", 0)
@@ -1130,20 +1219,21 @@ def _etapa_usuarios() -> bool:
     script_dir = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
     script_dir.mkdir(parents=True, exist_ok=True)
     ps_file = script_dir / "criar_usuarios.ps1"
-    try:
-        # utf-8-sig (BOM) garante leitura correta de acentos pelo PowerShell 5.1.
-        ps_file.write_text("\r\n".join(linhas) + "\r\n", encoding="utf-8-sig")
-    except Exception as exc:
-        _log(f"  ✗  Falha ao gerar script de usuários: {exc}", "err")
+    # O script carrega as senhas de todos os usuários: nasce restrito a
+    # administradores e é apagado no finally, aconteça o que acontecer.
+    if not _gravar_script_protegido(ps_file, "\r\n".join(linhas) + "\r\n"):
         _etapa_fim("usuarios", False, 72)
         return False
 
     _log("\n  👥  Criando/atualizando usuários locais...", "info")
-    if not _run_cmd(
-        f'powershell -NoProfile -ExecutionPolicy Bypass -File "{ps_file}"',
-        label="Criar/atualizar usuários", timeout=180,
-    ):
-        etapa_ok = False
+    try:
+        if not _run_cmd(
+            f'powershell -NoProfile -ExecutionPolicy Bypass -File "{ps_file}"',
+            label="Criar/atualizar usuários", timeout=180,
+        ):
+            etapa_ok = False
+    finally:
+        _apagar_script(ps_file)
 
     _etapa_fim("usuarios", etapa_ok, 72)
     return etapa_ok
@@ -1561,7 +1651,8 @@ def main() -> None:
     log.info("✔  Rodando como Administrador.")
 
     # Injeta os helpers compartilhados nos módulos locais (evita import circular).
-    usuarios.init(_log, _logged_user, _NO_WINDOW)
+    usuarios.init(_log, _logged_user, _NO_WINDOW,
+                  _gravar_script_protegido, _apagar_script)
     programas.init(_log, _broadcast, _logged_user, _NO_WINDOW)
 
     port   = _find_free_port()

@@ -38,7 +38,8 @@ def checar(descricao: str, obtido, esperado) -> None:
 
 
 def main() -> int:
-    agente.usuarios.init(agente._log, agente._logged_user, agente._NO_WINDOW)
+    agente.usuarios.init(agente._log, agente._logged_user, agente._NO_WINDOW,
+                         agente._gravar_script_protegido, agente._apagar_script)
     agente.programas.init(agente._log, agente._broadcast, agente._logged_user, agente._NO_WINDOW)
 
     porta = agente._find_free_port()
