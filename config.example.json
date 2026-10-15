@@ -1,5 +1,5 @@
 {
-  "_comentario": "MODELO de configuração do Agente Blue. Copie este arquivo para 'config.json' (ao lado do agente.exe / agente.py) e preencha as senhas. O config.json real NÃO é versionado no Git.",
+  "_comentario": "MODELO de configuração do Agente Blue. Copie este arquivo para 'config.json' na raiz do projeto (ou ao lado do AgenteBlue.exe) e preencha as senhas. O config.json real NÃO é versionado no Git.",
 
   "admin": {
     "_comentario": "Credencial usada para elevar o agente a Administrador.",
@@ -40,7 +40,7 @@
     {
       "nome": "Adobe Acrobat Reader",
       "metodo": "local",
-      "filename": "reader_br_R9BVLF8K_install.exe",
+      "filename": "Reader_br_R9BVLF8K_install.exe",
       "args": "",
       "ok_codes": [0, 3010],
       "detect": "C:\\Program Files\\Adobe\\Acrobat DC\\Acrobat\\Acrobat.exe"

@@ -4,15 +4,25 @@ agente.py — Agente Blue
 Automação Windows sem dependências externas.
 
 Arquitetura:
-  - Servidor HTTP local (stdlib) serve a interface HTML
+  - Servidor HTTP local (stdlib) serve a interface de web/
   - Server-Sent Events (SSE) enviam logs em tempo real ao browser
   - Edge/Chrome abre em modo --app (janela limpa, sem abas)
 
+Layout de pastas (idêntico no repositório e ao lado do .exe):
+  src/         código Python (este arquivo, usuarios.py, programas.py)
+  web/         interface (index.html, style.css, *.js)
+  assets/      ícone e "Fundo de Tela.*"
+  installers/  instaladores locais usados pela etapa de softwares
+  config.json  configuração com as credenciais (NÃO versionado)
+
 Ordem de execução ao clicar em Executar:
-  1. Downloads e instalações de software (com progresso individual)
+  1. Instalação de softwares (com progresso individual)
   2. Papel de parede
   3. Configuração de Descoberta de Rede (firewall + serviços)
   4. Configuração SMB (desativar assinatura)
+  5. Criação/atualização de usuários locais
+  6. Otimização do Windows
+  7. Verificação de integridade (SFC / DISM)
 """
 
 import ctypes
@@ -35,28 +45,45 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 
-import usuarios  # módulo local: painel Gerenciar Usuários (v3.0)
-import programas  # módulo local: desinstalador em lote (v3.0)
+import usuarios  # módulo local: painel Gerenciar Usuários
+import programas  # módulo local: desinstalador em lote
 
 # ─────────────────────────────────────────────
 #  CAMINHOS
 # ─────────────────────────────────────────────
+# _BASE_DIR  → raiz "externa": pasta do .exe quando compilado, raiz do
+#              repositório em desenvolvimento (este arquivo vive em src/).
+#              É onde o técnico edita config.json e popula installers/.
+# _BUNDLE_DIR→ cópia embutida no executável (_MEIPASS no onefile). Serve de
+#              fallback quando o arquivo não existe solto ao lado do .exe.
 if getattr(sys, "frozen", False):
     _BASE_DIR = Path(sys.executable).resolve().parent
     _BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", _BASE_DIR))
 else:
-    _BASE_DIR = Path(__file__).resolve().parent
+    _BASE_DIR = Path(__file__).resolve().parent.parent
     _BUNDLE_DIR = _BASE_DIR
 
-# Pasta com instaladores locais (Chrome, Adobe, WinRAR, Office)
-_EXE_DIR = _BASE_DIR / ".exe"
+_WEB_DIR = _BASE_DIR / "web"            # interface servida pelo HTTP local
+_ASSETS_DIR = _BASE_DIR / "assets"      # ícone e papel de parede
+_EXE_DIR = _BASE_DIR / "installers"     # instaladores locais (Chrome, Office, …)
+
+
+def _resolver(rel: str) -> Optional[Path]:
+    """Procura um arquivo/pasta relativo primeiro na raiz externa (editável sem
+    recompilar) e depois na cópia embutida no executável. None se não existir."""
+    for raiz in (_BASE_DIR, _BUNDLE_DIR):
+        cand = raiz / rel
+        if cand.exists():
+            return cand
+    return None
 
 # ─────────────────────────────────────────────
 #  CONFIGURAÇÃO EXTERNA (config.json)
-#    Credenciais, usuários, softwares e impressora ficam fora do código-fonte
-#    (e fora do .exe), num config.json editável ao lado do agente. Assim o
-#    técnico ajusta tudo sem recompilar e nada sensível fica embutido no binário.
-#    Procura nesta ordem: ao lado do .exe → base → cópia embutida (_MEIPASS).
+#    Credenciais, usuários e softwares ficam fora do código-fonte (e, por
+#    padrão, fora do .exe), num config.json editável na raiz / ao lado do
+#    agente. Assim o técnico ajusta tudo sem recompilar e nada sensível fica
+#    embutido no binário.
+#    Procura nesta ordem: raiz externa → cópia embutida (_MEIPASS).
 # ─────────────────────────────────────────────
 
 def _boot_print(msg: str) -> None:
@@ -70,16 +97,17 @@ def _boot_print(msg: str) -> None:
 
 
 def _load_config() -> dict:
-    for cand in (_BASE_DIR / "config.json", _BUNDLE_DIR / "config.json"):
-        if cand.exists():
-            try:
-                with open(cand, "r", encoding="utf-8-sig") as fh:
-                    cfg = json.load(fh)
-                _boot_print(f"[config] Carregado de: {cand}")
-                return cfg
-            except Exception as exc:
-                _boot_print(f"[config] Falha ao ler {cand}: {exc}")
-    _boot_print("[config] config.json não encontrado — usando valores padrão internos.")
+    cand = _resolver("config.json")
+    if cand:
+        try:
+            with open(cand, "r", encoding="utf-8-sig") as fh:
+                cfg = json.load(fh)
+            _boot_print(f"[config] Carregado de: {cand}")
+            return cfg
+        except Exception as exc:
+            _boot_print(f"[config] Falha ao ler {cand}: {exc}")
+    _boot_print(f"[config] config.json não encontrado em {_BASE_DIR} — "
+                "copie config.example.json para config.json e preencha as senhas.")
     return {}
 
 
@@ -115,7 +143,7 @@ except Exception:
     _LOG_DIR = Path(os.environ.get("TEMP", r"C:\Temp"))
 _LOG_FILE = _LOG_DIR / "agente_blue.log"
 
-# Wallpaper: procura o arquivo "Fundo de Tela.*" na raiz do executável / script
+# Wallpaper: procura "Fundo de Tela.*" em assets/ (externo ou embutido)
 _WALLPAPER_NAMES = [
     "Fundo de Tela.jpg", "Fundo de Tela.jpeg",
     "Fundo de Tela.png", "Fundo de Tela.bmp",
@@ -147,11 +175,11 @@ log = logging.getLogger("agente-blue")
 
 # ─────────────────────────────────────────────
 #  CATÁLOGO DE SOFTWARES
-#    metodo="local" → usa executável da pasta .exe/ ao lado do agente
+#    metodo="local" → usa executável da pasta installers/ ao lado do agente
 #    metodo="url"   → baixa o instalador e roda silencioso (fallback)
-#  Todos os instaladores agora vêm da pasta .exe/ (sem winget).
+#  Todos os instaladores agora vêm da pasta installers/ (sem winget).
 #  nome     : deve bater com data-sw do index.html
-#  filename : nome exato do arquivo dentro de .exe/
+#  filename : nome exato do arquivo dentro de installers/
 #  detect   : caminho que indica instalação já existente (pula)
 #  ok_codes : códigos de saída tratados como sucesso (padrão {0})
 # ─────────────────────────────────────────────
@@ -188,21 +216,31 @@ def _broadcast(event: dict):
 
 class AgenteHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        # Garante que o diretório base seja o local onde os arquivos foram extraídos (_MEIPASS)
-        super().__init__(*args, directory=str(_BASE_DIR), **kwargs)
+        # A interface é servida de web/ — nunca da raiz, para não expor
+        # config.json nem os instaladores pelo HTTP local.
+        super().__init__(*args, directory=str(_WEB_DIR), **kwargs)
 
     def log_message(self, format, *args):
         pass
 
     def translate_path(self, path):
-        # Serve a partir da pasta externa (editável). Se o arquivo não existir
-        # ali, cai para a cópia embutida em _internal (_BUNDLE_DIR).
+        # /assets/... vem da pasta assets/ (ícone), fora da raiz web/.
+        limpo = path.split("?", 1)[0].split("#", 1)[0]
+        if limpo.startswith("/assets/"):
+            rel = limpo[len("/assets/"):]
+            if rel and ".." not in rel:
+                achado = _resolver(f"assets/{rel}")
+                if achado:
+                    return str(achado)
+
+        # Serve a partir de web/ externo (editável sem recompilar). Se o arquivo
+        # não existir ali, cai para a cópia embutida em _internal (_BUNDLE_DIR).
         ext = super().translate_path(path)
         if os.path.exists(ext):
             return ext
         try:
-            rel = os.path.relpath(ext, str(_BASE_DIR))
-            cand = os.path.join(str(_BUNDLE_DIR), rel)
+            rel = os.path.relpath(ext, str(_WEB_DIR))
+            cand = os.path.join(str(_BUNDLE_DIR), "web", rel)
             if os.path.exists(cand):
                 return cand
         except ValueError:
@@ -665,15 +703,15 @@ def _instalar_via_url(app: dict) -> bool:
 
 def _instalar_via_local(app: dict) -> bool:
     """Instala a partir de um executável local. Procura nesta ordem:
-      1. pasta .exe/ ao lado do executável  (permite trocar instaladores sem recompilar)
-      2. cópia embutida no próprio .exe       (_MEIPASS/.exe — build onefile autossuficiente)"""
+      1. pasta installers/ ao lado do executável (troca instaladores sem recompilar)
+      2. cópia embutida no próprio .exe          (_MEIPASS/installers — build onefile)"""
     nome = app["nome"]
     filename = app["filename"]
     user_ctx = bool(app.get("user_context"))
 
     candidatos = [
         _EXE_DIR / filename,                 # externo (ao lado do .exe)
-        _BUNDLE_DIR / ".exe" / filename,     # embutido (dentro do .exe / _MEIPASS)
+        _BUNDLE_DIR / "installers" / filename,  # embutido (dentro do .exe / _MEIPASS)
     ]
     arquivo = next((c for c in candidatos if c.exists()), None)
 
@@ -802,22 +840,18 @@ def _etapa_wallpaper() -> bool:
     _etapa_inicio("wallpaper", 30)
 
     # ── Localizar arquivo embutido ou externo ────────────────────────────────
-    # Ordem: 1) ao lado do .exe (externo, permite trocar sem recompilar)
-    #        2) cópia EMBUTIDA dentro do .exe (_BUNDLE_DIR / _MEIPASS no onefile)
-    candidatos: List[Path] = []
-    for nome in _WALLPAPER_NAMES:
-        candidatos.append(Path(sys.executable).parent / nome)   # pasta do .exe (externo)
-        candidatos.append(_BASE_DIR / nome)                     # base (dev = projeto)
-        candidatos.append(_BUNDLE_DIR / nome)                   # embutido no .exe (_MEIPASS)
-
+    # Ordem por nome: 1) assets/ externo (editável sem recompilar)
+    #                 2) assets/ embutido no .exe (_BUNDLE_DIR / _MEIPASS)
+    #                 3) solto ao lado do .exe (layout antigo, compatibilidade)
     src: Optional[Path] = None
-    for c in candidatos:
-        if c.exists():
-            src = c.resolve()
+    for nome in _WALLPAPER_NAMES:
+        cand = _resolver(f"assets/{nome}") or _resolver(nome)
+        if cand:
+            src = cand.resolve()
             break
 
     if src is None:
-        _log("  ⚠  Imagem 'Fundo de Tela.*' não encontrada. Pulando wallpaper.", "warn")
+        _log("  ⚠  Imagem 'Fundo de Tela.*' não encontrada em assets/. Pulando wallpaper.", "warn")
         _etapa_fim("wallpaper", False, 35)
         return False
 
