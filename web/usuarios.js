@@ -29,12 +29,7 @@ function _msg(el, texto, tipo) {
 
 async function _post(url, body) {
   try {
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body || {})
-    });
-    return await r.json();
+    return await apiPost(url, body);
   } catch (e) {
     return { ok: false, erro: 'Falha ao contactar o servidor.' };
   }
@@ -53,7 +48,7 @@ async function carregarUsuarios() {
 
   let data;
   try {
-    const r = await fetch('/api/usuarios/listar');
+    const r = await apiFetch('/api/usuarios/listar');
     data = await r.json();
   } catch (e) {
     lista.innerHTML = '<p class="u-loading">Falha ao carregar usuários.</p>';

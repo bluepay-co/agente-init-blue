@@ -16,7 +16,7 @@ async function carregarProgramas() {
 
   let data;
   try {
-    const r = await fetch('/api/programas/listar');
+    const r = await apiFetch('/api/programas/listar');
     data = await r.json();
   } catch (e) {
     lista.innerHTML = '<p class="u-loading">Falha ao carregar programas.</p>';
@@ -115,14 +115,11 @@ async function desinstalarSelecionados() {
 
   // Abre o stream ANTES de disparar, para não perder os primeiros eventos.
   if (_progES) { _progES.close(); _progES = null; }
-  _progES = new EventSource('/api/stream');
+  _progES = apiStream('/api/stream');
   _progES.onmessage = _handleProgEvent;
   _progES.onopen = () => {
-    fetch('/api/programas/desinstalar', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: sel.map(p => p.id) })
-    }).catch(() => _msgP(msg, 'Falha ao contactar o servidor.', 'err'));
+    apiPost('/api/programas/desinstalar', { ids: sel.map(p => p.id) })
+      .catch(() => _msgP(msg, 'Falha ao contactar o servidor.', 'err'));
   };
 }
 

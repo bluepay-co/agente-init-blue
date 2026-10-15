@@ -3,6 +3,8 @@
 
 <head>
   <meta charset="UTF-8" />
+  <!-- impede que o token na URL vaze pelo cabeçalho Referer -->
+  <meta name="referrer" content="no-referrer" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Agente Blue — Setup Automático</title>
   <link rel="icon" type="image/x-icon" href="/assets/bluepay-ico.ico">
@@ -319,6 +321,8 @@
     </div>
   </div>
 
+  <!-- api.js primeiro: define o token usado pelos demais. -->
+  <script src="api.js"></script>
   <script src="script.js"></script>
   <script src="usuarios.js"></script>
   <script src="programas.js"></script>

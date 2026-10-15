@@ -200,19 +200,15 @@ function iniciarAgente() {
     const iniciarExecucao = () => {
       if (_iniciado) return;
       _iniciado = true;
-      fetch('/api/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          instalar_softwares: document.getElementById('chkSoftwares').checked,
-          softwares_selecionados: selectedSW,
-          otimizacao: document.getElementById('chkOtimizacao').checked,
-          verificar_integridade: document.getElementById('chkIntegridade').checked
-        })
+      apiPost('/api/execute', {
+        instalar_softwares: document.getElementById('chkSoftwares').checked,
+        softwares_selecionados: selectedSW,
+        otimizacao: document.getElementById('chkOtimizacao').checked,
+        verificar_integridade: document.getElementById('chkIntegridade').checked
       }).catch(() => appendLog('[!] Falha ao contactar o servidor Python.', 'err'));
     };
 
-    _eventSource = new EventSource('/api/stream');
+    _eventSource = apiStream('/api/stream');
     _eventSource.onmessage = handleEvent;
     // IMPORTANTE: só inicia a automação DEPOIS que o stream de log abrir,
     // senão as primeiras mensagens são emitidas antes do navegador ouvir
@@ -309,7 +305,7 @@ document.getElementById('chkIntegridade').addEventListener('change', (e) => {
 });
 
 // ── Versão do agente (fonte única: src/version.py) ──
-fetch('/api/version')
+apiFetch('/api/version')
   .then((r) => r.json())
   .then((d) => {
     const el = document.getElementById('appVersion');

@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import queue
+import secrets
 import shutil
 import socket
 import socketserver
@@ -39,6 +40,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 import webbrowser
 from datetime import datetime
@@ -199,6 +201,22 @@ def _normalizar_softwares(lista: List[dict]) -> List[dict]:
 SOFTWARES: List[dict] = _normalizar_softwares(_CONFIG.get("softwares", []))
 
 # ─────────────────────────────────────────────
+#  TOKEN DA API
+#    O agente roda como Administrador e expõe rotas que criam usuários e
+#    desinstalam programas. Sem proteção, QUALQUER página aberta no navegador
+#    da máquina poderia chamá-las (o navegador envia a requisição por ela).
+#
+#    Proteção, sem pedir nada ao técnico:
+#      • token aleatório novo a cada execução, só vive em memória;
+#      • a janela do agente recebe o token na própria URL de abertura e o
+#        reenvia em cada chamada (header X-Agente-Token; no SSE, query ?t=);
+#      • outra aba/página não conhece o token → 403.
+#    Também conferimos Host e Origin para barrar DNS rebinding e chamadas
+#    vindas de um site externo.
+# ─────────────────────────────────────────────
+_API_TOKEN: str = secrets.token_urlsafe(32)
+
+# ─────────────────────────────────────────────
 #  FILA SSE
 # ─────────────────────────────────────────────
 _sse_queues: List[queue.Queue] = []
@@ -248,16 +266,61 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             pass
         return ext
 
+    # ── Autorização das rotas /api/ ──────────────────────────────────────────
+
+    def _rota(self) -> str:
+        """Caminho sem query string, para roteamento."""
+        return self.path.split("?", 1)[0]
+
+    def _token_recebido(self) -> str:
+        """Token enviado no header (fetch) ou na query ?t= (EventSource, que
+        não permite headers customizados)."""
+        cab = self.headers.get("X-Agente-Token")
+        if cab:
+            return cab
+        _, _, query = self.path.partition("?")
+        return urllib.parse.parse_qs(query).get("t", [""])[0]
+
+    def _autorizado(self) -> bool:
+        """True se a requisição veio da janela do agente."""
+        # 1. Host precisa ser o loopback. Barra DNS rebinding, em que um domínio
+        #    externo resolve para 127.0.0.1 e passa a falar com o agente.
+        host = (self.headers.get("Host") or "").split(":")[0]
+        if host not in ("127.0.0.1", "localhost"):
+            return False
+
+        # 2. Se houver Origin, só aceitamos a da própria janela. Um site
+        #    externo que tentasse chamar a API mandaria a origem dele.
+        origem = self.headers.get("Origin")
+        if origem and origem not in (f"http://127.0.0.1:{self.server.server_port}",
+                                     f"http://localhost:{self.server.server_port}"):
+            return False
+
+        # 3. Token da sessão (comparação em tempo constante). Comparamos em
+        #    bytes: compare_digest recusa str com caracteres não-ASCII, e o
+        #    token chega de fora — um acentuado não pode virar erro 500.
+        recebido = self._token_recebido().encode("utf-8", "replace")
+        return secrets.compare_digest(recebido, _API_TOKEN.encode("utf-8"))
+
+    def _negar(self) -> None:
+        self._json_response(
+            {"ok": False, "erro": "Requisição não autorizada (token inválido)."},
+            status=403)
+
     def do_GET(self):
-        if self.path == "/api/stream":
+        if self._rota().startswith("/api/") and not self._autorizado():
+            self._negar()
+            return
+
+        if self._rota() == "/api/stream":
             self._handle_sse()
-        elif self.path == "/api/version":
+        elif self._rota() == "/api/version":
             # Fonte única da versão: src/version.py. A UI lê daqui no load.
             self._json_response({"versao": __version__})
-        elif self.path == "/api/usuarios/listar":
+        elif self._rota() == "/api/usuarios/listar":
             # Gerenciar Usuários: retorna a lista de usuários locais reais.
             self._json_response(usuarios.listar())
-        elif self.path == "/api/programas/listar":
+        elif self._rota() == "/api/programas/listar":
             # Desinstalar Programas: lista programas desktop + apps da Store.
             self._json_response(programas.listar())
         else:
@@ -274,7 +337,11 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             return {}
 
     def do_POST(self):
-        if self.path == "/api/execute":
+        if self._rota().startswith("/api/") and not self._autorizado():
+            self._negar()
+            return
+
+        if self._rota() == "/api/execute":
             params = self._read_json_body()
 
             instalar = params.get("instalar_softwares", True)
@@ -290,23 +357,23 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response({"ok": True})
 
         # ── Gerenciar Usuários (v3.0) ─────────────────────────────────────────
-        elif self.path == "/api/usuarios/criar":
+        elif self._rota() == "/api/usuarios/criar":
             p = self._read_json_body()
             self._json_response(usuarios.criar(
                 p.get("nome", ""), p.get("senha", ""), bool(p.get("admin", False))))
 
-        elif self.path == "/api/usuarios/editar":
+        elif self._rota() == "/api/usuarios/editar":
             p = self._read_json_body()
             self._json_response(usuarios.editar(
                 p.get("sid", ""), p.get("novo_nome", ""), p.get("nova_senha", "")))
 
-        elif self.path == "/api/usuarios/excluir":
+        elif self._rota() == "/api/usuarios/excluir":
             p = self._read_json_body()
             self._json_response(usuarios.excluir(
                 p.get("sid", ""), bool(p.get("apagar_perfil", False))))
 
         # ── Desinstalar Programas (v3.0) ──────────────────────────────────────
-        elif self.path == "/api/programas/desinstalar":
+        elif self._rota() == "/api/programas/desinstalar":
             p = self._read_json_body()
             ids = p.get("ids", [])
             threading.Thread(
@@ -322,7 +389,6 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Type",  "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection",    "keep-alive")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
         q: queue.Queue = queue.Queue()
@@ -1503,7 +1569,9 @@ def main() -> None:
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
 
-    url = f"http://127.0.0.1:{port}/index.html"
+    # O token viaja na URL de abertura; a interface o guarda e reenvia
+    # em cada chamada. Nenhuma outra página do navegador o conhece.
+    url = f"http://127.0.0.1:{port}/index.html?t={_API_TOKEN}"
     log.info(f"Servidor local em: {url}")
     _open_app_window(url)
 
