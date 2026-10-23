@@ -30,7 +30,7 @@ if not is_admin():
     sys.exit()
 
 # ── CONSTANTS ──────────────────────────────────────────────────────────────────
-SERVIDOR_IP     = "192.168.0.17"
+SERVIDOR_IP     = "192.168.10.11"
 ADMIN_IP        = "192.168.1.151"
 CONFIG_PATH     = r"C:\BlueControl\config.json"
 METRICAS_EXE    = r"C:\BlueControl\BlueControl_Metricas.exe"
@@ -543,7 +543,7 @@ input:focus {
     <h1>BlueControl IT</h1>
   </div>
   <div class="sub">Instalador do Agente de Gerenciamento</div>
-  <div class="svr">Servidor: 192.168.0.17</div>
+  <div class="svr">Servidor: 192.168.10.11</div>
 </div>
 
 <div class="wrap">

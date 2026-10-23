@@ -65,7 +65,7 @@ if not exist "C:\BlueControl\config.json" (
     (
         echo {
         echo   "patrimonio": "0001",
-        echo   "url_api": "http://192.168.0.17:8550",
+        echo   "url_api": "http://192.168.10.11:8550",
         echo   "token_agente": "%BLUECONTROL_AGENT_TOKEN%",
         echo   "intervalo_segundos": 300
         echo }

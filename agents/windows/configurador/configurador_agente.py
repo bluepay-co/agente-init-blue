@@ -57,7 +57,7 @@ REMOTE_EXE    = "BlueControl_Remote.exe"
 REMOTE_TASK   = "BlueControlRemote"
 LEGADO_SERVICE = "BlueControlLite"
 
-DEFAULT_URL_API   = "http://192.168.0.17:8550"
+DEFAULT_URL_API   = "http://192.168.10.11:8550"
 # Sem padrão no código: um token conhecido na fonte vale tanto quanto nenhum.
 DEFAULT_TOKEN     = os.environ.get("BLUECONTROL_AGENT_TOKEN", "")
 DEFAULT_INTERVALO = 300

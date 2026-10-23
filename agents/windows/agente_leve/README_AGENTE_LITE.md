@@ -48,7 +48,7 @@ O instalador vai:
 ```json
 {
   "patrimonio": "0001",
-  "url_api": "http://192.168.0.17:8550",
+  "url_api": "http://192.168.10.11:8550",
   "token_agente": "SEU_TOKEN_AQUI",
   "intervalo_segundos": 300
 }
@@ -155,7 +155,7 @@ services.msc
 
 ### "Conexão recusada" no log
 - A máquina não consegue alcançar a API
-- Verifique: `ping 192.168.0.17`
+- Verifique: `ping 192.168.10.11`
 - Verifique a URL em `config.json`
 
 ### "Token inválido"
@@ -180,7 +180,7 @@ pip install --upgrade psutil requests
 ## 📊 Exemplo de Log
 
 ```
-2026-09-03 10:15:32 [INFO] [INICIADO] BlueControl Lite | Patrimônio: 0001 | API: http://192.168.0.17:8550
+2026-09-03 10:15:32 [INFO] [INICIADO] BlueControl Lite | Patrimônio: 0001 | API: http://192.168.10.11:8550
 2026-09-03 10:15:32 [INFO] Intervalo: 300s | Primeira coleta em 300s...
 2026-09-03 10:20:32 [INFO] ✓ Métricas enviadas com sucesso | CPU: 45.2% | RAM: 62.3%
 2026-09-03 10:25:32 [INFO] ✓ Métricas enviadas com sucesso | CPU: 38.5% | RAM: 59.1%
@@ -193,7 +193,7 @@ pip install --upgrade psutil requests
 Após instalar e o agente enviar métricas, acesse:
 
 ```
-http://192.168.0.17:8550
+http://192.168.10.11:8550
 → Monitoramento (NOC)
 → Procure pela máquina com patrimônio "0001"
 ```

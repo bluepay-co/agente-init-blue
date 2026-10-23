@@ -10,7 +10,7 @@
 set -e
 
 # ── Configurações fixas ──────────────────────────────────────
-SERVIDOR_IP="192.168.0.17"
+SERVIDOR_IP="192.168.10.11"
 SERVIDOR_PORTA="8550"
 # Segredo vem do ambiente — nunca do código. Defina antes de rodar:
 #   export BLUECONTROL_AGENT_TOKEN=...

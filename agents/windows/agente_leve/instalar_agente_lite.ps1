@@ -11,7 +11,7 @@
 
 param(
     [string]$Patrimonio = "0001",
-    [string]$UrlAPI = "http://192.168.0.17:8550",
+    [string]$UrlAPI = "http://192.168.10.11:8550",
     [string]$TokenAgente = $env:BLUECONTROL_AGENT_TOKEN,
     [int]$IntervalSegundos = 300
 )

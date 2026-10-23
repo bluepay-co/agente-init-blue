@@ -68,7 +68,7 @@ def carregar_config():
         # Cria config padrão se não existir
         config_padrao = {
             "patrimonio": "0001",
-            "url_api": "http://192.168.0.17:8550",
+            "url_api": "http://192.168.10.11:8550",
             "token_agente": os.environ.get("BLUECONTROL_AGENT_TOKEN", ""),
             "intervalo_segundos": 300  # 5 minutos
         }

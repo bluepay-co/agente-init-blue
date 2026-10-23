@@ -23,7 +23,7 @@ import os, sys, json, stat, subprocess, hashlib, tempfile, threading
 import webview
 
 # ── CONFIGURAÇÕES ─────────────────────────────────────────────────────────────
-SERVIDOR_IP    = "192.168.0.17"
+SERVIDOR_IP    = "192.168.10.11"
 SERVIDOR_PORTA = 8550
 # Segredo vem do ambiente — nunca do código. Defina antes de rodar:
 #   export BLUECONTROL_AGENT_TOKEN=...
@@ -226,7 +226,7 @@ button.go.ok{background:var(--green)}button.go.err{background:var(--red)}
 </div>
 
 <details class="adv card"><summary>Servidor (avançado)</summary>
-  <label>URL da API</label><input id="urlApi" value="http://192.168.0.17:8550">
+  <label>URL da API</label><input id="urlApi" value="http://192.168.10.11:8550">
   <label>Token do agente</label><input id="token" value="" placeholder="token fornecido pelo administrador">
 </details>
 

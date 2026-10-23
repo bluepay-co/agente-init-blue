@@ -104,7 +104,10 @@
         <div id="avancadoFields" style="display:none;flex-direction:column;gap:10px">
           <div class="field">
             <label>URL da API</label>
-            <input type="text" id="cfgUrlApi" value="http://192.168.0.17:8550">
+            <!-- Valor de partida. Quem manda e DEFAULT_URL_API em
+                 configurador_agente.py: o /api/status sobrescreve este campo
+                 ao abrir, inclusive em maquina nova. -->
+            <input type="text" id="cfgUrlApi" value="http://192.168.10.11:8550">
           </div>
           <div class="field">
             <label>Token do agente</label>

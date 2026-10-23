@@ -94,7 +94,7 @@ def _headers(config: dict) -> dict:
     }
 
 def _api_urls(config: dict) -> list:
-    return config.get("api_urls") or [config.get("api_url", "http://192.168.0.17:8550")]
+    return config.get("api_urls") or [config.get("api_url", "http://192.168.10.11:8550")]
 
 # ─── Hash do agente ────────────────────────────────────────────────────────
 _AGENTE_HASH: str = ""

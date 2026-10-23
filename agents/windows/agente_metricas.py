@@ -569,7 +569,7 @@ def _headers(config: dict) -> dict:
 def _api_urls(config: dict) -> list[str]:
     # "url_api" é o nome gravado pelo ConfiguradorAgente
     return (config.get("api_urls")
-            or [config.get("api_url") or config.get("url_api") or "http://192.168.0.17:8550"])
+            or [config.get("api_url") or config.get("url_api") or "http://192.168.10.11:8550"])
 
 def enviar_metricas(config: dict, metricas: dict) -> bool:
     pat = config.get("patrimonio", "")
