@@ -525,8 +525,11 @@ input:checked + .slider:before {
    Gerenciar Usuários (v3.0)
    ============================================ */
 
-/* Views preservam o mesmo espaçamento vertical do .content (flex + gap). */
-#viewMain, #viewUsers, #viewPrograms {
+/* Views preservam o mesmo espaçamento vertical do .content (flex + gap).
+   TODA view nova precisa entrar aqui: o showView() aplica display:flex, e sem
+   o flex-direction:column os cards se alinham em LINHA e a aba vira um amasso
+   horizontal. Foi o que aconteceu com a #viewMonitor quando ela foi criada. */
+#viewMain, #viewUsers, #viewPrograms, #viewMonitor {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1029,6 +1032,17 @@ input:checked + .slider:before {
    quando a instalação começa. Escopado por id para não mexer na do Setup. */
 #monProgressSection      { display: none; }
 #monProgressSection.show { display: flex; }
+
+/* O rótulo do card que carrega uma ação à direita ("Servidor  mostrar").
+   O .card-label do agente é um <p> comum; no configurador ele era flex, e é o
+   flex que empurra a ação para a direita. Escopado na aba para não alterar o
+   alinhamento dos rótulos das outras três. */
+#viewMonitor .card-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 
 /* O "mostrar/ocultar" do bloco Servidor. Era style inline no configurador;
    o .card-label é caixa-alta com tracking, e a ação precisa escapar disso. */
