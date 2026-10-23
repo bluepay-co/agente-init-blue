@@ -16,29 +16,29 @@ def checa(desc, ok):
     print(f"  {'OK   ' if ok else 'FALHA'}  {desc}")
 
 # Simula um config.json carregado com senhas reais.
-agente._ADMIN_PASS = "Sham23*"
+agente._ADMIN_PASS = "SenhaFalsaDeTeste#9"
 agente.USUARIOS = [{"nome": "Suporte", "senha": "SenhaDoSuporte1"}]
 agente.SOFTWARES = [{"nome": "AnyDesk", "unattended_password": "SenhaAnyDesk9"}]
 
 capturado = []
 agente._broadcast = lambda ev: capturado.append(ev.get("msg", ""))
 
-agente._log("rodando: net use \\\\srv /user:admin Sham23*")
+agente._log("rodando: net use \\\\srv /user:admin SenhaFalsaDeTeste#9")
 agente._log("usuario Suporte com senha SenhaDoSuporte1 criado")
 agente._log("anydesk --set-password SenhaAnyDesk9")
 texto = "\n".join(capturado)
-checa("senha do admin mascarada no log",     "Sham23*" not in texto)
+checa("senha do admin mascarada no log",     "SenhaFalsaDeTeste#9" not in texto)
 checa("senha de usuario mascarada no log",   "SenhaDoSuporte1" not in texto)
 checa("senha do AnyDesk mascarada no log",   "SenhaAnyDesk9" not in texto)
 checa("mensagem preservada fora do segredo", "net use" in texto and "***" in texto)
 
 # Arquivo de log em disco tambem nao pode conter a senha.
 conteudo_log = pathlib.Path(agente._LOG_FILE).read_text(encoding="utf-8", errors="replace")
-checa("arquivo de log sem a senha", "Sham23*" not in conteudo_log)
+checa("arquivo de log sem a senha", "SenhaFalsaDeTeste#9" not in conteudo_log)
 
 # Gravacao protegida + remocao garantida.
 alvo = pathlib.Path(base) / "teste_credencial.ps1"
-agente._gravar_script_protegido(alvo, "$senha = 'Sham23*'\n")
+agente._gravar_script_protegido(alvo, "$senha = 'SenhaFalsaDeTeste#9'\n")
 checa("script criado", alvo.exists())
 agente._apagar_script(alvo)
 checa("script apagado apos o uso", not alvo.exists())

@@ -13,6 +13,8 @@ Instalar:
 
 import json
 import logging
+import secrets
+import shlex
 import subprocess
 import sys
 import time
@@ -51,6 +53,16 @@ log.addHandler(_con)
 
 # ─── Scripts de bloqueio/desbloqueio ───────────────────────────────────────
 # Rodamos como root (LaunchDaemon), não precisa de sudo
+#
+# As senhas NÃO ficam nos scripts: entram em runtime por montar_script(), vindas
+# do config.json ou sorteadas. Senha versionada no Git vale tanto quanto nenhuma.
+#
+# Marcas @@...@@ em vez de str.format(): estes scripts são shell e estão cheios
+# de "$" e "{}", que o format interpretaria. A substituição passa por
+# shlex.quote, senão uma senha com " ou $ escaparia das aspas e viraria comando.
+_MARCA_LOCKOUT = "@@SENHA_LOCKOUT@@"   # sorteada: trava o usuário para fora
+_MARCA_ADMIN   = "@@SENHA_ADMIN@@"     # conta "bluecontrol" (config.json)
+_MARCA_TEMP    = "@@SENHA_TEMP@@"      # senha que o usuário recebe de volta
 
 SCRIPT_BLOQUEIO = r"""
 CONSOLE_USER=$(stat -f "%Su" /dev/console 2>/dev/null)
@@ -67,8 +79,8 @@ fi
 
 for user in $(dscl . -list /Users | grep -v '^_' | grep -v 'root\|nobody\|daemon\|Guest\|bluecontrol\|admin'); do
     echo "NEUTRALIZANDO:$user"
-    sysadminctl -resetPasswordFor "$user" -newPassword "ComplexA#Bloqueado!" 2>/dev/null || \
-        dscl . -passwd /Users/$user "ComplexA#Bloqueado!" 2>/dev/null || true
+    sysadminctl -resetPasswordFor "$user" -newPassword @@SENHA_LOCKOUT@@ 2>/dev/null || \
+        dscl . -passwd /Users/$user @@SENHA_LOCKOUT@@ 2>/dev/null || true
     dscl . -create /Users/$user UserShell /usr/bin/false 2>/dev/null || true
     sysadminctl -disableUser "$user" 2>/dev/null || \
         dscl . -create /Users/$user AuthenticationAuthority ";DisabledUser;" 2>/dev/null || true
@@ -88,11 +100,11 @@ for user in $(dscl . -list /Users | grep -v '^_' | grep -v 'root\|nobody\|daemon
     dscl . -create /Users/$user UserShell /bin/zsh 2>/dev/null || true
     # NÃO deletar AuthenticationAuthority — o bloqueio não a modificou,
     # deletar destruiria o hash da senha e impediria o login.
-    sysadminctl -enableUser "$user" -adminUser "bluecontrol" -adminPassword "ComplexA#Bloqueado!" 2>/dev/null || \
+    sysadminctl -enableUser "$user" -adminUser "bluecontrol" -adminPassword @@SENHA_ADMIN@@ 2>/dev/null || \
         sysadminctl -enableUser "$user" 2>/dev/null || true
-    sysadminctl -resetPasswordFor "$user" -newPassword "Suporte@123" \
-        -adminUser "bluecontrol" -adminPassword "ComplexA#Bloqueado!" 2>/dev/null || \
-        dscl . -passwd /Users/$user "Suporte@123" 2>/dev/null || true
+    sysadminctl -resetPasswordFor "$user" -newPassword @@SENHA_TEMP@@ \
+        -adminUser "bluecontrol" -adminPassword @@SENHA_ADMIN@@ 2>/dev/null || \
+        dscl . -passwd /Users/$user @@SENHA_TEMP@@ 2>/dev/null || true
     dscl . -append /Groups/staff GroupMembership "$user" 2>/dev/null || true
 done
 
@@ -155,6 +167,37 @@ def _http_post(url: str, token: str, payload: dict) -> dict:
         return json.loads(resp.read().decode())
 
 
+def _senha_obrigatoria(cfg: dict, chave: str) -> str:
+    """Senha vinda só do config.json, como o token. Sem padrão no código."""
+    valor = cfg.get(chave)
+    if not valor:
+        raise SystemExit(
+            f"[config] '{chave}' ausente no config.json do agente "
+            f"({CONFIG_PATH}) — bloqueio/desbloqueio remoto não pode rodar."
+        )
+    return valor
+
+
+def montar_script(tmpl: str, cfg: dict) -> str:
+    """Troca as marcas @@...@@ pelas senhas, já escapadas para o shell.
+
+    A senha de lockout é sorteada a cada bloqueio: ela existe só para o usuário
+    não conseguir mais entrar, ninguém precisa conhecê-la, e fixa no código
+    bastaria alguém ler o repositório para destravar qualquer máquina.
+    """
+    pronto = tmpl
+    if _MARCA_LOCKOUT in pronto:
+        lockout = "Bl!" + secrets.token_urlsafe(24)
+        pronto = pronto.replace(_MARCA_LOCKOUT, shlex.quote(lockout))
+    if _MARCA_ADMIN in pronto:
+        pronto = pronto.replace(
+            _MARCA_ADMIN, shlex.quote(_senha_obrigatoria(cfg, "senha_admin_local")))
+    if _MARCA_TEMP in pronto:
+        pronto = pronto.replace(
+            _MARCA_TEMP, shlex.quote(_senha_obrigatoria(cfg, "senha_temporaria")))
+    return pronto
+
+
 def _token_obrigatorio(cfg: dict) -> str:
     """Token do agente, vindo so do config. Sem padrao: um token conhecido no
     codigo-fonte vale tanto quanto nenhum."""
@@ -192,9 +235,9 @@ def poll_uma_vez(cfg: dict):
 
     # Executa o script correto
     if tipo == "bloquear":
-        sucesso, saida = executar_script(SCRIPT_BLOQUEIO, "bloqueio")
+        sucesso, saida = executar_script(montar_script(SCRIPT_BLOQUEIO, cfg), "bloqueio")
     elif tipo == "desbloquear":
-        sucesso, saida = executar_script(SCRIPT_DESBLOQUEIO, "desbloqueio")
+        sucesso, saida = executar_script(montar_script(SCRIPT_DESBLOQUEIO, cfg), "desbloqueio")
     else:
         log.warning(f"Tipo de comando desconhecido: {tipo}")
         sucesso, saida = False, f"Tipo desconhecido: {tipo}"

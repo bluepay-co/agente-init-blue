@@ -34,9 +34,30 @@ para em vez de falar com a API usando uma chave que está publicada no Git.
 | Variável | Para quê |
 |---|---|
 | `BLUECONTROL_AGENT_TOKEN` | Token do agente, enviado em `X-Agent-Token` |
+| `BLUECONTROL_ADMIN_PASS` | Senha do administrador local usada no bloqueio/desbloqueio remoto |
+| `BLUECONTROL_SENHA_TEMP` | Senha que os usuários recebem ao serem desbloqueados |
 
-Em tempo de execução, cada agente lê `token_agente` (ou `agent_secret`) do
-`config.json` gravado pelo instalador.
+Em tempo de execução, cada agente lê do `config.json` gravado pelo instalador:
+`token_agente` (ou `agent_secret`), `senha_admin_local` e `senha_temporaria`.
+Faltando qualquer um, o agente **para com erro** em vez de usar um valor padrão.
+
+### Bloqueio e desbloqueio remoto
+
+Os scripts `windows/scripts/bloqueio_remoto.ps1` e `desbloqueio_remoto.ps1` são
+disparados pelo painel, não por este repositório. Ambos aceitam a credencial por
+parâmetro e caem na variável de ambiente quando ela não vem:
+
+```powershell
+.\bloqueio_remoto.ps1    -IpLocal 192.168.10.42 -SenhaAdmin '...'
+.\desbloqueio_remoto.ps1 -IpLocal 192.168.10.42 -SenhaAdmin '...' -SenhaTemporaria '...'
+```
+
+Sem a credencial eles saem com código **3** (`ERRO_SEM_CREDENCIAL`); o
+desbloqueio sem senha temporária sai com **4** (`ERRO_SEM_SENHA_TEMPORARIA`).
+
+A senha que **tranca** o usuário para fora não vem de lugar nenhum: é sorteada a
+cada execução, porque ninguém precisa conhecê-la. Antes era fixa no código — e
+uma senha de bloqueio publicada no Git destrava qualquer máquina da empresa.
 
 ### Instalando
 

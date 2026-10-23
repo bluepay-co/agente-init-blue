@@ -1,6 +1,10 @@
 param(
     [string]$IpLocal,
-    [string]$UsuarioAdmin = "Administrador"
+    [string]$UsuarioAdmin = "Administrador",
+    [string]$SenhaAdmin,
+    # Servidor do BlueControl IT: o unico que fica liberado no WinRM da maquina
+    # bloqueada. Passe -IpServidor se o endereco mudar.
+    [string]$IpServidor = "192.168.10.11"
 )
 
 $IpLocal = "$IpLocal".Trim()
@@ -14,7 +18,12 @@ function Testar-Ping {
     return ($LASTEXITCODE -eq 0)
 }
 
-$nova_senha_random = "ComplexA#$(Get-Random -Minimum 1000 -Maximum 9999)!"
+# Senha que trava o usuario para fora. Ninguem precisa conhece-la, entao e
+# sorteada -- mas com entropia de verdade: o "Get-Random 1000..9999" de antes
+# dava 9 mil possibilidades, chutaveis por quem quisesse voltar a entrar.
+$bytes = New-Object byte[] 24
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$nova_senha_random = "Bl!" + [Convert]::ToBase64String($bytes)
 
 Clear-Host
 Write-Output "INICIANDO BLOQUEIO"
@@ -23,19 +32,30 @@ Write-Output "LOCAL: [$IpLocal]"
 # Autoriza os IPs no TrustedHosts
 Set-Item WSMan:\localhost\Client\TrustedHosts -Value "$IpLocal" -Force
 
-# Solicita credencial de admin
-$senha_admin = ConvertTo-SecureString "Sham23*" -AsPlainText -Force
+# Credencial do administrador local da maquina alvo. Sem padrao no codigo: uma
+# senha versionada no Git vale tanto quanto nenhuma. Vem por -SenhaAdmin ou pela
+# variavel de ambiente BLUECONTROL_ADMIN_PASS.
+if (-not $SenhaAdmin) { $SenhaAdmin = $env:BLUECONTROL_ADMIN_PASS }
+if ([string]::IsNullOrWhiteSpace($SenhaAdmin)) {
+    Write-Output "ERRO_SEM_CREDENCIAL"
+    Write-Output "Defina -SenhaAdmin ou a variavel de ambiente BLUECONTROL_ADMIN_PASS."
+    exit 3
+}
+$senha_admin = ConvertTo-SecureString $SenhaAdmin -AsPlainText -Force
 $cred = New-Object System.Management.Automation.PSCredential($UsuarioAdmin, $senha_admin)
 
 function Executar-BloqueioRemoto {
     param(
         [string]$AlvoIp,
         [pscredential]$Credencial,
-        [string]$SenhaNova
+        [string]$SenhaNova,
+        [string]$IpServidor
     )
 
+    # O ScriptBlock roda na maquina remota e NAO ve as variaveis daqui: tudo o
+    # que ele usa precisa entrar por -ArgumentList.
     Invoke-Command -ComputerName $AlvoIp -Credential $Credencial -Authentication Negotiate -ScriptBlock {
-        param($senha)
+        param($senha, $ipServidor)
 
         $usuarios = Get-LocalUser | Where-Object {
             $_.Enabled -eq $true -and
@@ -71,12 +91,12 @@ function Executar-BloqueioRemoto {
 
         # Libera WinRM apenas para o servidor BlueControl
         Enable-PSRemoting -Force -SkipNetworkProfileCheck | Out-Null
-        netsh advfirewall firewall add rule name="WinRM BlueControl" protocol=TCP dir=in localport=5985 action=allow remoteip=192.168.1.151 | Out-Null
+        netsh advfirewall firewall add rule name="WinRM BlueControl" protocol=TCP dir=in localport=5985 action=allow remoteip=$ipServidor | Out-Null
         Set-Service WinRM -StartupType Automatic | Out-Null
         Write-Output "WINRM_LIBERADO"
         Write-Output "REINICIANDO"
         shutdown /r /f /t 5
-    } -ArgumentList $SenhaNova -ErrorAction Stop
+    } -ArgumentList $SenhaNova, $IpServidor -ErrorAction Stop
 }
 
 Write-Output "PROCURANDO_ALVO"
@@ -90,7 +110,7 @@ if ($IpLocal) {
 
         try {
             Write-Output "EXECUTANDO_BLOQUEIO:local"
-            Executar-BloqueioRemoto -AlvoIp $IpLocal -Credencial $cred -SenhaNova $nova_senha_random
+            Executar-BloqueioRemoto -AlvoIp $IpLocal -Credencial $cred -SenhaNova $nova_senha_random -IpServidor $IpServidor
             Write-Output "SUCESSO_BLOQUEIO:local"
             exit 0
         }

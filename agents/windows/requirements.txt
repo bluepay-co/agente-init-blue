@@ -11,8 +11,9 @@ websockets
 av
 pillow
 
-# ── Instalador (Instalar_bluecontrol.py) ────────────────────
-pywebview
+# O instalador grafico (Instalar_bluecontrol.py, que pedia pywebview) foi
+# substituido pela aba Monitoramento do AgenteBlue.exe -- ver
+# src/monitoramento.py. Nenhuma dependencia extra: a aba usa so a stdlib.
 
 # ── Build dos .exe ──────────────────────────────────────────
 pyinstaller

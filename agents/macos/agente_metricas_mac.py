@@ -18,7 +18,7 @@ LaunchDaemon plist: /Library/LaunchDaemons/com.bluecontrol.metricas.plist
 # agente rodar no Python 3.9 do macOS (a sintaxe "int | None" só existe no 3.10+).
 from __future__ import annotations
 
-import os, sys, json, time, socket, logging, re, subprocess, hashlib, signal
+import os, sys, json, time, socket, logging, re, secrets, subprocess, hashlib, signal
 import requests, psutil
 from pathlib import Path
 
@@ -550,7 +550,11 @@ def bloquear_maquina() -> dict:
     erros = []
 
     try:
-        r = _sh(["dscl", ".", "-passwd", f"/Users/{usuario}", "ComplexA#Bloqueado!"])
+        # Senha sorteada: ela só precisa trancar o usuário para fora, ninguém
+        # precisa conhecê-la. Fixa no código, bastaria ler o repositório para
+        # destravar qualquer máquina bloqueada.
+        r = _sh(["dscl", ".", "-passwd", f"/Users/{usuario}",
+                 "Bl!" + secrets.token_urlsafe(24)])
         if r.returncode != 0:
             erros.append(f"dscl passwd: {r.stderr.strip()}")
     except Exception as e:
@@ -595,8 +599,20 @@ def desbloquear_maquina() -> dict:
     log.info(f"[CMD] DESBLOQUEAR — usuário: {usuario}")
     erros = []
 
+    # Senha que o usuário recebe de volta: vem do config.json, como o token.
+    # Sem padrão no código — fixa aqui, seria a mesma em todo equipamento
+    # desbloqueado da empresa.
     try:
-        r = _sh(["dscl", ".", "-passwd", f"/Users/{usuario}", "Suporte@123"])
+        senha_temp = (carregar_config() or {}).get("senha_temporaria")
+    except Exception as e:
+        return {"status": "erro", "msg": f"Erro ao ler {CONFIG_PATH}: {e}"}
+    if not senha_temp:
+        return {"status": "erro",
+                "msg": f"'senha_temporaria' ausente em {CONFIG_PATH} — "
+                       "sem ela o desbloqueio não pode definir a senha."}
+
+    try:
+        r = _sh(["dscl", ".", "-passwd", f"/Users/{usuario}", senha_temp])
         if r.returncode != 0:
             erros.append(f"dscl passwd: {r.stderr.strip()}")
     except Exception as e:

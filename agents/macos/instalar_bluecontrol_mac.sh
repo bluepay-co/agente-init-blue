@@ -12,19 +12,27 @@ set -e
 # ── Configurações fixas ──────────────────────────────────────
 SERVIDOR_IP="192.168.10.11"
 SERVIDOR_PORTA="8550"
-# Segredo vem do ambiente — nunca do código. Defina antes de rodar:
+# Segredos vêm do ambiente — nunca do código. Defina antes de rodar:
 #   export BLUECONTROL_AGENT_TOKEN=...
+#   export BLUECONTROL_ADMIN_PASS=...   # senha da conta "bluecontrol"
+#   export BLUECONTROL_SENHA_TEMP=...   # senha que o desbloqueio devolve
 AGENT_SECRET="${BLUECONTROL_AGENT_TOKEN:-}"
+ADMIN_PASS="${BLUECONTROL_ADMIN_PASS:-}"
+SENHA_TEMP="${BLUECONTROL_SENHA_TEMP:-}"
 BASE_DIR="/usr/local/bluecontrol"
 AGENTE_MTR="$BASE_DIR/BlueControl_Metricas_Mac"
 PLIST_MTR="/Library/LaunchDaemons/com.bluecontrol.metricas.plist"
 CONFIG="$BASE_DIR/config.json"
 LOG="/tmp/bluecontrol_install.log"
 
-if [ -z "$AGENT_SECRET" ]; then
-    echo "[ERRO] BLUECONTROL_AGENT_TOKEN não definida. Exporte-a antes de rodar o instalador." >&2
-    exit 1
-fi
+# ${!_v} = expansão indireta do bash (o valor da variável cujo NOME está em
+# _v). Evita o eval, que interpretaria o conteúdo de uma senha como código.
+for _v in BLUECONTROL_AGENT_TOKEN BLUECONTROL_ADMIN_PASS BLUECONTROL_SENHA_TEMP; do
+    if [ -z "${!_v}" ]; then
+        echo "[ERRO] $_v não definida. Exporte-a antes de rodar o instalador." >&2
+        exit 1
+    fi
+done
 
 # ── Helpers de diálogo ───────────────────────────────────────
 dialog_input() {
@@ -92,6 +100,8 @@ cat > "$CONFIG" << CFGEOF
   "servidor_ip": "$SERVIDOR_IP",
   "servidor_porta": $SERVIDOR_PORTA,
   "agent_secret": "$AGENT_SECRET",
+  "senha_admin_local": "$ADMIN_PASS",
+  "senha_temporaria": "$SENHA_TEMP",
   "intervalo_metricas_min": 5,
   "intervalo_inventario_min": 60,
   "tipo_os": "macos"

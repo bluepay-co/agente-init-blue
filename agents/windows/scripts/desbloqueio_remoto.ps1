@@ -1,7 +1,10 @@
 param(
     [string]$IpLocal,
-    [string]$UsuarioAdmin    = "Administrador",
-    [string]$SenhaTemporaria = "Suporte@123"
+    [string]$UsuarioAdmin = "Administrador",
+    [string]$SenhaAdmin,
+    # Senha que os usuarios reativados recebem. Sem padrao: uma senha fixa aqui
+    # seria a mesma em todo equipamento desbloqueado da empresa.
+    [string]$SenhaTemporaria
 )
 
 $IpLocal = "$IpLocal".Trim()
@@ -19,8 +22,31 @@ Write-Output "LOCAL: [$IpLocal]"
 
 Set-Item WSMan:\localhost\Client\TrustedHosts -Value "$IpLocal" -Force
 
-$senha_admin = ConvertTo-SecureString "Sham23*" -AsPlainText -Force
-$cred = New-Object System.Management.Automation.PSCredential("Administrador", $senha_admin)
+# Credencial do administrador local da maquina alvo. Sem padrao no codigo: uma
+# senha versionada no Git vale tanto quanto nenhuma. Vem por -SenhaAdmin ou pela
+# variavel de ambiente BLUECONTROL_ADMIN_PASS.
+if (-not $SenhaAdmin) { $SenhaAdmin = $env:BLUECONTROL_ADMIN_PASS }
+if ([string]::IsNullOrWhiteSpace($SenhaAdmin)) {
+    Write-Output "ERRO_SEM_CREDENCIAL"
+    Write-Output "Defina -SenhaAdmin ou a variavel de ambiente BLUECONTROL_ADMIN_PASS."
+    exit 3
+}
+
+# Sem senha temporaria nao da pra reativar ninguem de forma util: o tecnico
+# precisa saber qual e. Melhor parar aqui do que usar uma senha previsivel.
+if ([string]::IsNullOrWhiteSpace($SenhaTemporaria)) {
+    $SenhaTemporaria = $env:BLUECONTROL_SENHA_TEMP
+}
+if ([string]::IsNullOrWhiteSpace($SenhaTemporaria)) {
+    Write-Output "ERRO_SEM_SENHA_TEMPORARIA"
+    Write-Output "Defina -SenhaTemporaria ou a variavel BLUECONTROL_SENHA_TEMP."
+    exit 4
+}
+
+$senha_admin = ConvertTo-SecureString $SenhaAdmin -AsPlainText -Force
+# $UsuarioAdmin, nao "Administrador" fixo: o parametro existia e era ignorado,
+# entao passar -UsuarioAdmin nao tinha efeito nenhum.
+$cred = New-Object System.Management.Automation.PSCredential($UsuarioAdmin, $senha_admin)
 
 function Executar-DesbloqueioRemoto {
     param(
