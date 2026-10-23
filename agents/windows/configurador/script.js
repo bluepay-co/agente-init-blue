@@ -13,6 +13,14 @@ async function carregarStatus() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
+
+    // Os campos avançados vêm antes do early return: numa máquina nova
+    // (existe = false) eles são a única fonte de URL e token para buscar e
+    // cadastrar. O /api/status já devolve os padrões quando não há config.
+    if (d.url_api)      document.getElementById('cfgUrlApi').value    = d.url_api;
+    if (d.token_agente) document.getElementById('cfgToken').value     = d.token_agente;
+    if (d.intervalo_segundos) document.getElementById('cfgIntervalo').value = String(d.intervalo_segundos);
+
     if (!d.existe) return;
 
     document.getElementById('statusCard').style.display = 'block';
@@ -26,11 +34,6 @@ async function carregarStatus() {
     document.getElementById('statusDetalhe').textContent = detalheMap[d.servico] || d.url_api;
     const dot = document.getElementById('statusDot');
     dot.className = 'status-dot ' + (d.servico === 'rodando' ? 'on' : d.servico === 'parado' ? 'off' : 'none');
-
-    // Pré-preenche os campos avançados com a config atual
-    document.getElementById('cfgUrlApi').value = d.url_api;
-    document.getElementById('cfgToken').value = d.token_agente;
-    document.getElementById('cfgIntervalo').value = String(d.intervalo_segundos);
   } catch (e) {
     // Sem servidor local respondendo ainda — ignora, é só um card informativo
   }
@@ -68,16 +71,19 @@ function onBuscaInput() {
 
 async function buscarMaquinas(q) {
   const box = document.getElementById('resultados');
+  const urlApi = document.getElementById('cfgUrlApi').value.trim();
+  const token = document.getElementById('cfgToken').value.trim();
+  // Sem token a busca volta 401 e o motivo nao aparece. Diz qual campo falta.
+  if (!urlApi || !token) {
+    box.innerHTML = '<div class="resultado-vazio">Preencha a URL da API e o token do agente em "Servidor (avançado)".</div>';
+    return;
+  }
   box.innerHTML = '<div class="resultado-vazio">Buscando…</div>';
   try {
     const r = await fetch('/api/buscar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url_api: document.getElementById('cfgUrlApi').value.trim(),
-        token_agente: document.getElementById('cfgToken').value.trim(),
-        q,
-      }),
+      body: JSON.stringify({ url_api: urlApi, token_agente: token, q }),
     });
     const d = await r.json();
     if (!r.ok) {
@@ -91,7 +97,7 @@ async function buscarMaquinas(q) {
     box.innerHTML = d.dados.map((m, i) => `
       <div class="resultado-item" data-idx="${i}" onclick="selecionarMaquina(${i})">
         <span class="resultado-nome">${escapeHtml(m.modelo || m.patrimonio_interno)}</span>
-        <span class="resultado-meta">PAT ${m.patrimonio_interno} · ${escapeHtml(m.responsavel || 'sem responsável')}</span>
+        <span class="resultado-meta">PAT ${escapeHtml(m.patrimonio_interno)} · ${escapeHtml(m.responsavel || 'sem responsável')}</span>
       </div>
     `).join('');
     window._resultadosBusca = d.dados;
