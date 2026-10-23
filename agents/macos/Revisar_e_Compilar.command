@@ -33,7 +33,6 @@ echo "── 4) Conteúdo esperado (versão nova) ──────────
 chk "interface tem 'Cadastrar nova'"      'grep -q "Cadastrar nova" instalar_bluecontrol_mac.py'
 chk "interface tem 'Já cadastrada'"       'grep -q "Já cadastrada" instalar_bluecontrol_mac.py'
 chk "config grava tipo_os macos"          'grep -q "\"tipo_os\": \"macos\"" instalar_bluecontrol_mac.py'
-chk "sem VPN/senha de TI no fluxo novo"   'grep -qi "sem vpn" instalar_bluecontrol_mac.py'
 chk "build embute webview"                'grep -q "collect-all webview" compilar_mac.sh'
 chk "build usa caminho absoluto do agente" 'grep -qF "\$PWD/dist/BlueControl_Metricas_Mac" compilar_mac.sh'
 

@@ -5,7 +5,7 @@ Agentes instalados nas máquinas dos clientes. Conversam com a API do painel
 
 | Pasta | Conteúdo |
 |---|---|
-| `windows/` | Agente remoto, agente de métricas, agente VPN e o configurador |
+| `windows/` | Agente remoto, agente de métricas e o configurador |
 | `windows/agente_leve/` | Agente enxuto, só métricas essenciais |
 | `macos/` | Equivalentes para macOS, com LaunchDaemons em `macos/launchd/` |
 
@@ -17,17 +17,15 @@ para em vez de falar com a API usando uma chave que está publicada no Git.
 | Variável | Para quê |
 |---|---|
 | `BLUECONTROL_AGENT_TOKEN` | Token do agente, enviado em `X-Agent-Token` |
-| `BLUECONTROL_VPN_PSK` | Chave pré-compartilhada da VPN (só macOS) |
 
 Em tempo de execução, cada agente lê `token_agente` (ou `agent_secret`) do
-`config.json` gravado pelo instalador. No macOS a PSK fica em
-`/usr/local/bluecontrol/vpn_config.sh`, fora do repositório.
+`config.json` gravado pelo instalador.
 
 ### Instalando
 
 ```bash
 # macOS
-export BLUECONTROL_AGENT_TOKEN='...' BLUECONTROL_VPN_PSK='...'
+export BLUECONTROL_AGENT_TOKEN='...'
 bash macos/instalar_bluecontrol_mac.sh
 ```
 

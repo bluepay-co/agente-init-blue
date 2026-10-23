@@ -116,15 +116,12 @@ def coletar_metricas():
 
         # IPs
         ip_local = None
-        ip_vpn = None
         try:
             for iface, addrs in psutil.net_if_addrs().items():
                 for addr in addrs:
                     if addr.family == socket.AF_INET:
                         ip = addr.address
-                        if ip.startswith(('172.16.', '172.17.', '10.')):
-                            ip_vpn = ip
-                        elif ip.startswith('192.168.') and ip != '127.0.0.1':
+                        if ip.startswith('192.168.') and ip != '127.0.0.1':
                             ip_local = ip
         except Exception as e:
             log.warning(f"Erro ao detectar IPs: {e}")
@@ -146,7 +143,6 @@ def coletar_metricas():
             "disco_percent": disco_percent,
             "disco_total_gb": disco_total_gb,
             "ip_local": ip_local,
-            "ip_vpn": ip_vpn,
             "hostname": hostname,
             "uptime_horas": uptime_horas,
         }

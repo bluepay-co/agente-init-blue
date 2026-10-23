@@ -10,12 +10,11 @@ Compilar:
     --hidden-import=webview --hidden-import=webview.platforms.winforms ^
     --collect-all webview --icon=resources\logo.ico ^
     --add-data "dist\BlueControl_Metricas.exe;." ^
-    --add-data "dist\BlueControl_VPN.exe;." ^
     --add-data "dist\BlueControl_Remote.exe;." ^
     --name "BlueControl_Agente" Instalar_bluecontrol.py
 """
 
-import os, sys, ctypes, subprocess, winreg, json, time, threading
+import os, sys, ctypes, subprocess, json, time, threading
 from datetime import datetime
 import webview, base64 as _b64
 
@@ -33,13 +32,8 @@ if not is_admin():
 # ── CONSTANTS ──────────────────────────────────────────────────────────────────
 SERVIDOR_IP     = "192.168.0.17"
 ADMIN_IP        = "192.168.1.151"
-VPN_NAME        = "VPN_BLUEPAY"
-SSID_EMPRESA    = "Bluepay Corp"
-GATEWAY_EMPRESA = "192.168.1.254"
-AGENTE_PATH     = r"C:\BlueControl\agente_vpn.ps1"
 CONFIG_PATH     = r"C:\BlueControl\config.json"
 METRICAS_EXE    = r"C:\BlueControl\BlueControl_Metricas.exe"
-VPN_SVC_EXE     = r"C:\BlueControl\BlueControl_VPN.exe"
 REMOTE_EXE      = r"C:\BlueControl\BlueControl_Remote.exe"
 LOG_PATH        = r"C:\BlueControl\instalacao.log"
 SCRIPTS_DIR     = r"C:\BlueControl\scripts"
@@ -113,31 +107,6 @@ def instalar_winrm():
     ps("Restart-Service WinRM")
     log("OK WinRM configurado")
 
-def criar_vpn(usuario_vpn, senha_vpn):
-    log("=== Criando VPN ===")
-    psk = os.environ.get("BC_VPN_PSK", "")
-    if not psk:
-        log("x VPN nao criada: variavel de ambiente BC_VPN_PSK nao definida. "
-            "Defina-a (fora do source, ex.: um .bat local nao versionado) antes de instalar.")
-        return
-    ps(f"Remove-VpnConnection -Name '{VPN_NAME}' -Force -AllUserConnection -ErrorAction SilentlyContinue")
-    psk_escapado = psk.replace("'", "''")
-    ok = ps(
-        f"Add-VpnConnection "
-        f"-Name '{VPN_NAME}' "
-        f"-ServerAddress '187.102.159.62' "
-        f"-TunnelType L2tp "
-        f"-L2tpPsk '{psk_escapado}' "
-        f"-AuthenticationMethod MSChapv2 "
-        f"-EncryptionLevel Required "
-        f"-AllUserConnection "
-        f"-RememberCredential "
-        f"-Force"
-    )
-    log(f"{'OK' if ok else 'x'} VPN criada")
-    sh(f'cmdkey /add:187.102.159.62 /user:{usuario_vpn} /pass:{senha_vpn}')
-    log(f"OK Credenciais salvas para {usuario_vpn}")
-
 def proteger_pasta():
     log("=== Protegendo C:\\BlueControl ===")
     os.makedirs(r"C:\BlueControl", exist_ok=True)
@@ -159,168 +128,9 @@ def instalar_ping():
     ps(f"New-NetFirewallRule -DisplayName 'Ping BlueControl' -Direction Inbound -Action Allow -Protocol ICMPv4 -RemoteAddress {SERVIDOR_IP},{ADMIN_IP} -Profile Any")
     log("OK Ping configurado")
 
-def bloquear_vpn():
-    log("=== Bloqueio VPN ===")
-    try:
-        chave = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\Policies\Microsoft\Windows\Network Connections",
-            0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(chave, "NC_DeleteConnection",    0, winreg.REG_DWORD, 0)
-        winreg.SetValueEx(chave, "NC_DisableDisconnect",   0, winreg.REG_DWORD, 1)
-        winreg.SetValueEx(chave, "NC_LanChangeProperties", 0, winreg.REG_DWORD, 0)
-        winreg.SetValueEx(chave, "NC_AddDeleteConnection", 0, winreg.REG_DWORD, 0)
-        winreg.CloseKey(chave)
-        log("OK VPN bloqueada para usuario comum")
-    except Exception as e:
-        log(f"x Registro: {e}")
-
-def instalar_agente(usuario_vpn, senha_vpn):
-    log("=== Agente VPN ===")
-    os.makedirs(r"C:\BlueControl", exist_ok=True)
-    senha_escapada = senha_vpn.replace("'", "''")
-    # Captura MAC do gateway para embutir no script
-    def _ps_out_inst(cmd: str) -> str:
-        try:
-            r = subprocess.run(["powershell", "-NoProfile", "-Command", cmd],
-                               capture_output=True, text=True, timeout=10, creationflags=_NO_WIN)
-            return r.stdout.strip()
-        except Exception:
-            return ""
-
-    gw_ip_inst = _ps_out_inst(
-        "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue"
-        " | Sort-Object RouteMetric | Select-Object -First 1).NextHop"
-    )
-    subprocess.run(["ping", "-n", "1", "-w", "800", gw_ip_inst],
-                   capture_output=True, timeout=5, creationflags=_NO_WIN)
-    mac_inst = _ps_out_inst(
-        f"(Get-NetNeighbor -IPAddress '{gw_ip_inst}' -ErrorAction SilentlyContinue"
-        f" | Where-Object {{$_.State -ne 'Unreachable'}} | Select-Object -First 1).LinkLayerAddress"
-    ).upper().replace("-", ":")
-
-    script = f"""# BlueControl IT - Agente VPN Inteligente (detecção por MAC)
-$VPN_NAME      = "{VPN_NAME}"
-$VPN_USER      = "{usuario_vpn}"
-$VPN_PASS      = '{senha_escapada}'
-$GW_MAC_EMPRESA = @("{mac_inst}")
-$GW_IP_EMPRESA  = @("{GATEWAY_EMPRESA}", "192.168.0.1")
-$COOLDOWN_FILE = "C:\\BlueControl\\vpn_cooldown.txt"
-$COOLDOWN_SEG  = 70
-
-function Get-GatewayMac {{
-    $gw = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1).NextHop
-    if (-not $gw) {{ return $null }}
-    ping -n 1 -w 800 $gw | Out-Null
-    $mac = (Get-NetNeighbor -IPAddress $gw -ErrorAction SilentlyContinue | Where-Object {{ $_.State -ne "Unreachable" }} | Select-Object -First 1).LinkLayerAddress
-    if ($mac) {{ return $mac.ToUpper().Replace("-",":") }}
-    return $null
-}}
-
-function Esta-NoEscritorio {{
-    # Primário: compara MAC do gateway (único por roteador físico)
-    $mac = Get-GatewayMac
-    if ($mac -and $GW_MAC_EMPRESA -contains $mac) {{ return $true }}
-    # Fallback: IP do gateway (caso MAC indisponível)
-    if (-not $mac) {{
-        $gw = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1).NextHop
-        if ($GW_IP_EMPRESA -contains $gw) {{ return $true }}
-    }}
-    return $false
-}}
-
-function VPN-Conectada {{
-    $status = (Get-VpnConnection -Name $VPN_NAME -AllUserConnection -ErrorAction SilentlyContinue).ConnectionStatus
-    return $status -eq "Connected"
-}}
-
-function Em-Cooldown {{
-    if (Test-Path $COOLDOWN_FILE) {{
-        $ultima = [datetime](Get-Content $COOLDOWN_FILE)
-        if ((Get-Date) -lt $ultima.AddSeconds($COOLDOWN_SEG)) {{ return $true }}
-    }}
-    return $false
-}}
-
-function Registrar-Cooldown {{ (Get-Date).ToString() | Set-Content $COOLDOWN_FILE }}
-
-if (Esta-NoEscritorio) {{
-    if (VPN-Conectada) {{
-        rasdial $VPN_NAME /disconnect 2>$null
-        Registrar-Cooldown
-    }}
-}} else {{
-    if (-not (VPN-Conectada)) {{
-        if (-not (Em-Cooldown)) {{
-            rasdial $VPN_NAME $VPN_USER $VPN_PASS 2>$null
-            if (-not $?) {{ Registrar-Cooldown }}
-        }}
-    }}
-}}
-"""
-    with open(AGENTE_PATH, "w", encoding="utf-8") as f:
-        f.write(script)
-    log(f"OK Agente salvo em {AGENTE_PATH}")
-
-def instalar_tarefas():
-    log("=== Tarefas Agendadas ===")
-    base = f'$a = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File {AGENTE_PATH}"; $s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew'
-    ps(f"""{base}
-$t = New-ScheduledTaskTrigger -AtLogOn
-$p = New-ScheduledTaskPrincipal -GroupId "BUILTIN\\Users" -RunLevel Highest
-Unregister-ScheduledTask -TaskName "Agente VPN Inteligente" -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName "Agente VPN Inteligente" -Action $a -Trigger $t -Settings $s -Principal $p -Force | Out-Null""")
-    log("OK Tarefa AtLogOn criada")
-    ps(f"""{base}
-$t = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 1) -Once -At (Get-Date)
-$p = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
-Unregister-ScheduledTask -TaskName "Agente VPN Monitoramento" -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName "Agente VPN Monitoramento" -Action $a -Trigger $t -Settings $s -Principal $p -Force | Out-Null""")
-    log("OK Tarefa 1min criada")
-
-def disparar_agente():
-    subprocess.Popen(
-        ["powershell", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", AGENTE_PATH],
-        creationflags=subprocess.CREATE_NO_WINDOW
-    )
-
-def escrever_config(patrimonio: str, usuario_vpn: str = "", senha_vpn: str = ""):
+def escrever_config(patrimonio: str):
     log("=== Config BlueControl ===")
     os.makedirs(r"C:\BlueControl", exist_ok=True)
-
-    # Captura MAC do gateway atual (instalação feita dentro da empresa)
-    def _ps_out(cmd: str) -> str:
-        try:
-            r = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", cmd],
-                capture_output=True, text=True, timeout=10, creationflags=_NO_WIN
-            )
-            return r.stdout.strip()
-        except Exception:
-            return ""
-
-    def _capturar_mac_gateway() -> str:
-        try:
-            gw = _ps_out(
-                "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue"
-                " | Sort-Object RouteMetric | Select-Object -First 1).NextHop"
-            )
-            if not gw:
-                return ""
-            subprocess.run(["ping", "-n", "1", "-w", "800", gw],
-                           capture_output=True, timeout=5, creationflags=_NO_WIN)
-            mac = _ps_out(
-                f"(Get-NetNeighbor -IPAddress '{gw}' -ErrorAction SilentlyContinue"
-                f" | Where-Object {{$_.State -ne 'Unreachable'}} | Select-Object -First 1).LinkLayerAddress"
-            )
-            return mac.upper().replace("-", ":") if mac else ""
-        except Exception:
-            return ""
-
-    mac_gw = _capturar_mac_gateway()
-    if mac_gw:
-        log(f"OK MAC do gateway capturado: {mac_gw}")
-    else:
-        log("  Aviso: nao foi possivel capturar MAC do gateway")
 
     _agent_secret = os.environ.get("AGENT_SECRET", "")
     if not _agent_secret:
@@ -328,18 +138,10 @@ def escrever_config(patrimonio: str, usuario_vpn: str = "", senha_vpn: str = "")
             "agentes ficarao sem autenticacao valida. Defina antes de instalar.")
 
     cfg = {
-        "patrimonio":           patrimonio.strip(),
-        "api_urls":             [
-            "http://172.16.100.1:8550",
-            f"http://{SERVIDOR_IP}:8550"
-        ],
-        "agent_secret":         _agent_secret,
-        "intervalo_segundos":   300,
-        "vpn_nome":             VPN_NAME,
-        "vpn_usuario":          usuario_vpn,
-        "vpn_senha":            senha_vpn,
-        "gateways_empresa":     [GATEWAY_EMPRESA, "192.168.0.1"],
-        "gateway_macs_empresa": [mac_gw] if mac_gw else ["C8:4F:86:D4:4F:DF"],
+        "patrimonio":         patrimonio.strip(),
+        "api_urls":           [f"http://{SERVIDOR_IP}:8550"],
+        "agent_secret":       _agent_secret,
+        "intervalo_segundos": 300,
     }
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
@@ -392,20 +194,6 @@ def instalar_metricas():
         "BlueControlMetricas", METRICAS_EXE,
         "BlueControl IT - Agente de Metricas",
         "Coleta metricas e inventario para o BlueControl IT."
-    )
-
-def instalar_servico_vpn():
-    log("=== Servico VPN ===")
-    subprocess.run(["sc", "stop", "BlueControlVPN"], capture_output=True)
-    time.sleep(2)
-    _copiar_exe("BlueControl_VPN.exe", VPN_SVC_EXE)
-    if not os.path.exists(VPN_SVC_EXE):
-        log(f"  {VPN_SVC_EXE} nao encontrado — servico nao instalado.")
-        return
-    _instalar_servico(
-        "BlueControlVPN", VPN_SVC_EXE,
-        "BlueControl IT - Agente VPN",
-        "Conecta e desconecta a VPN BluePay automaticamente."
     )
 
 def instalar_remote():
@@ -761,18 +549,10 @@ input:focus {
 <div class="wrap">
 
   <div class="card" id="card-cred">
-    <div class="card-ttl">Credenciais VPN do colaborador</div>
+    <div class="card-ttl">Dados do equipamento</div>
     <div class="field">
       <label>Patrimônio interno (ex: 0064)</label>
       <input id="patrimonio" type="text" placeholder="0064" autocomplete="off" spellcheck="false">
-    </div>
-    <div class="field">
-      <label>Usuário VPN</label>
-      <input id="usuario" type="text" placeholder="nome.sobrenome" autocomplete="off" spellcheck="false">
-    </div>
-    <div class="field">
-      <label>Senha VPN</label>
-      <input id="senha" type="password" placeholder="••••••••">
     </div>
   </div>
 
@@ -823,7 +603,7 @@ function showComplete() {
   btn.classList.add('ok');
   btn.disabled = false;
   btn.onclick = fechar;
-  showAlert('WinRM · VPN · RDP · Métricas · Limpeza — tudo configurado.', 'ok');
+  showAlert('WinRM · RDP · Métricas · Limpeza — tudo configurado.', 'ok');
 }
 
 function fechar() {
@@ -839,25 +619,19 @@ function showError(msg) {
 
 async function instalar() {
   const p = document.getElementById('patrimonio').value.trim();
-  const u = document.getElementById('usuario').value.trim();
-  const s = document.getElementById('senha').value.trim();
   document.getElementById('alert').style.display = 'none';
   if (!p) { showAlert('Digite o patrimônio interno (ex: 0064)', 'err'); return; }
-  if (!u || u === 'nome.sobrenome') { showAlert('Digite o usuário VPN do colaborador', 'err'); return; }
-  if (!s) { showAlert('Digite a senha VPN do colaborador', 'err'); return; }
   const btn = document.getElementById('btn');
   btn.disabled = true; btn.textContent = 'Instalando...';
   showProgArea();
-  window.pywebview.api.instalar({ patrimonio: p, usuario: u, senha: s });
+  window.pywebview.api.instalar({ patrimonio: p });
 }
 
 window.addEventListener('pywebviewready', async () => {
   try {
     const d = await window.pywebview.api.get_setup_data();
-    if (d.patrimonio)  document.getElementById('patrimonio').value = d.patrimonio;
-    if (d.vpn_usuario) document.getElementById('usuario').value    = d.vpn_usuario;
-    if (d.vpn_senha)   document.getElementById('senha').value      = d.vpn_senha;
-    if (d.modo_silencioso && d.patrimonio && d.vpn_usuario && d.vpn_senha)
+    if (d.patrimonio) document.getElementById('patrimonio').value = d.patrimonio;
+    if (d.modo_silencioso && d.patrimonio)
       setTimeout(instalar, 900);
   } catch (_) {}
 });
@@ -877,7 +651,7 @@ class _Api:
     def instalar(self, params):
         threading.Thread(
             target=self._run,
-            args=(params["patrimonio"], params["usuario"], params["senha"]),
+            args=(params["patrimonio"],),
             daemon=True
         ).start()
         return True
@@ -900,39 +674,19 @@ class _Api:
         self._js(f"setStatus({json.dumps(label)},{json.dumps(sub)})")
 
     # ── install thread ─────────────────────────────────────────────────────────
-    def _run(self, patrimonio, usuario, senha):
+    def _run(self, patrimonio):
         try:
             self._status("Configurando WinRM", "Habilitando gerenciamento remoto na porta 5985")
             instalar_winrm()
             self._step(12)
 
-            self._status("Criando VPN BluePay", "Conexão L2TP/IPSec com autenticação MSChapv2")
-            criar_vpn(usuario, senha)
-            self._step(24)
-
             self._status("Liberando ping", "Regra de firewall para comunicação com o servidor")
             instalar_ping()
             self._step(34)
 
-            self._status("Bloqueando configurações de rede", "Impedindo usuário comum de alterar a VPN")
-            bloquear_vpn()
-            self._step(44)
-
-            self._status("Instalando agente VPN", "Script PowerShell de reconexão automática")
-            instalar_agente(usuario, senha)
-            self._step(54)
-
-            self._status("Criando tarefas agendadas", "Verificação a cada 1 minuto e ao fazer login")
-            instalar_tarefas()
-            self._step(63)
-
-            self._status("Gravando configuração", f"Patrimônio {patrimonio} · URLs da API")
-            escrever_config(patrimonio, usuario, senha)
+            self._status("Gravando configuração", f"Patrimônio {patrimonio} · URL da API")
+            escrever_config(patrimonio)
             self._step(71)
-
-            self._status("Instalando serviço VPN", "Serviço Windows de conexão automática")
-            instalar_servico_vpn()
-            self._step(80)
 
             self._status("Instalando agente de métricas", "Coleta de CPU, RAM e HD em tempo real")
             instalar_metricas()
@@ -965,7 +719,6 @@ class _Api:
                 log(f"Aviso: nao foi possivel copiar instalador: {e}")
 
             proteger_pasta()
-            disparar_agente()
 
             self._js("showComplete()")
 

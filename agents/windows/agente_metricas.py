@@ -239,14 +239,11 @@ def coletar_metricas() -> dict:
 
     # Detect IPs
     ip_local = None
-    ip_vpn = None
     for iface, addrs in psutil.net_if_addrs().items():
         for addr in addrs:
             if addr.family == socket.AF_INET:
                 ip = addr.address
-                if ip.startswith(('172.16.', '172.17.', '10.')):
-                    ip_vpn = ip
-                elif ip.startswith('192.168.') and ip != '127.0.0.1':
+                if ip.startswith('192.168.') and ip != '127.0.0.1':
                     ip_local = ip
 
     try:
@@ -286,7 +283,6 @@ def coletar_metricas() -> dict:
         "top_processos":       json.dumps(top_processos, ensure_ascii=False),
         "hostname":            socket.gethostname(),
         "ip_local":            ip_local,
-        "ip_vpn":              ip_vpn,
         "agente_hash":         _AGENTE_HASH,
     }
 

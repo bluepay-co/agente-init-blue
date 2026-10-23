@@ -96,24 +96,6 @@ def _headers(config: dict) -> dict:
 def _api_urls(config: dict) -> list:
     return config.get("api_urls") or [config.get("api_url", "http://192.168.0.17:8550")]
 
-# ─── VPN — rota interna (split tunnel) ────────────────────────────────────
-def garantir_rota_interna():
-    """Garante que 192.168.0.0/24 roteia via ppp0 (split tunnel)."""
-    try:
-        netstat = _out(["netstat", "-rn"])
-        if "192.168.0" in netstat:
-            return
-        ppp = _out(["ifconfig", "ppp0"])
-        if "inet" not in ppp:
-            return
-        r = _sh(["route", "add", "-net", "192.168.0.0/24", "-interface", "ppp0"])
-        if r.returncode == 0:
-            log.info("Rota 192.168.0.0/24 via ppp0 adicionada")
-        else:
-            log.debug(f"route add: {r.stderr.strip()}")
-    except Exception as e:
-        log.debug(f"garantir_rota_interna: {e}")
-
 # ─── Hash do agente ────────────────────────────────────────────────────────
 _AGENTE_HASH: str = ""
 
@@ -233,14 +215,12 @@ def coletar_metricas() -> dict:
 
     cpu_temp = _cpu_temp()
 
-    ip_local = ip_vpn = None
+    ip_local = None
     for iface, addrs in psutil.net_if_addrs().items():
         for addr in addrs:
             if addr.family == socket.AF_INET:
                 ip = addr.address
-                if ip.startswith(("172.16.", "172.17.", "10.")):
-                    ip_vpn = ip
-                elif ip.startswith("192.168.") and ip != "127.0.0.1":
+                if ip.startswith("192.168.") and ip != "127.0.0.1":
                     ip_local = ip
 
     try:
@@ -281,7 +261,6 @@ def coletar_metricas() -> dict:
         "top_processos":       json.dumps(top_processos, ensure_ascii=False),
         "hostname":            socket.gethostname(),
         "ip_local":            ip_local,
-        "ip_vpn":              ip_vpn,
         "agente_hash":         _AGENTE_HASH,
     }
 
@@ -839,8 +818,6 @@ def main():
             log.error(f"Erro ao carregar config: {e}")
             time.sleep(30)
             continue
-
-        garantir_rota_interna()
 
         try:
             if agora - _ultimo_comandos >= 60:

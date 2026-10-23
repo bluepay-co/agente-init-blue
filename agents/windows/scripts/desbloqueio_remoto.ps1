@@ -1,11 +1,9 @@
 param(
-    [string]$IpVpn,
     [string]$IpLocal,
     [string]$UsuarioAdmin    = "Administrador",
     [string]$SenhaTemporaria = "Suporte@123"
 )
 
-$IpVpn   = "$IpVpn".Trim()
 $IpLocal = "$IpLocal".Trim()
 
 function Testar-Ping {
@@ -17,10 +15,9 @@ function Testar-Ping {
 
 Clear-Host
 Write-Output "INICIANDO DESBLOQUEIO"
-Write-Output "VPN: [$IpVpn]"
 Write-Output "LOCAL: [$IpLocal]"
 
-Set-Item WSMan:\localhost\Client\TrustedHosts -Value "$IpVpn,$IpLocal" -Force
+Set-Item WSMan:\localhost\Client\TrustedHosts -Value "$IpLocal" -Force
 
 $senha_admin = ConvertTo-SecureString "Sham23*" -AsPlainText -Force
 $cred = New-Object System.Management.Automation.PSCredential("Administrador", $senha_admin)
@@ -72,21 +69,6 @@ if ($IpLocal) {
             exit 0
         } catch {
             Write-Output "FALHA_LOCAL:$($_.Exception.Message)"
-        }
-    }
-}
-
-if ($IpVpn) {
-    $pingVpn = Testar-Ping -Ip $IpVpn
-    if ($pingVpn) {
-        Write-Output "ALVO_ENCONTRADO_VPN:$IpVpn"
-        try {
-            Write-Output "EXECUTANDO_DESBLOQUEIO:vpn"
-            Executar-DesbloqueioRemoto -AlvoIp $IpVpn -Credencial $cred -SenhaNova $SenhaTemporaria
-            Write-Output "SUCESSO_DESBLOQUEIO:vpn"
-            exit 0
-        } catch {
-            Write-Output "FALHA_VPN:$($_.Exception.Message)"
         }
     }
 }

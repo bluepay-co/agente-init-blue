@@ -6,12 +6,10 @@ Interface HTML idêntica ao instalador Windows, via pywebview (WebKit nativo).
 
 Funcionalidades:
   - Torna TODOS os usuários da máquina administradores
-  - Instala agente VPN com detecção por MAC do gateway
   - Instala agente de métricas como LaunchDaemon
   - Watchdog que recarrega serviços se forem parados
   - Proteção por senha IT (bluecontrol-parar exige a senha)
   - SSH habilitado
-  - VPN L2TP/IPSec criada no SystemConfiguration
 
 Compilar:
   pip install pyinstaller pywebview
@@ -27,19 +25,14 @@ import webview
 # ── CONFIGURAÇÕES ─────────────────────────────────────────────────────────────
 SERVIDOR_IP    = "192.168.0.17"
 SERVIDOR_PORTA = 8550
-# Segredos vêm do ambiente — nunca do código. Defina antes de rodar:
-#   export BLUECONTROL_AGENT_TOKEN=... BLUECONTROL_VPN_PSK=...
+# Segredo vem do ambiente — nunca do código. Defina antes de rodar:
+#   export BLUECONTROL_AGENT_TOKEN=...
 AGENT_SECRET   = os.environ.get("BLUECONTROL_AGENT_TOKEN", "")
-VPN_NAME       = "VPN_BLUEPAY"
-VPN_SERVIDOR   = "187.102.159.62"
-VPN_PSK        = os.environ.get("BLUECONTROL_VPN_PSK", "")
-GATEWAY_MAC_BP = "C8:4F:86:D4:4F:DF"   # MAC fixo do roteador Bluepay
 BASE_DIR       = "/usr/local/bluecontrol"
 # Usuário de serviço + chave pública do servidor (comandos remotos via SSH:
 # desligar/reiniciar/bloquear/pop-up). A chave PRIVADA fica só no servidor.
 SSH_USER       = "bluecontrol"
 SSH_PUBKEY     = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAaoGuVj+GbfMLfwpBcdhZQs+jTr7oxjGOkKq+9pnXtx bluecontrol-mac-20260916"
-PLIST_VPN      = "/Library/LaunchDaemons/com.bluecontrol.agente.plist"
 PLIST_MTR      = "/Library/LaunchDaemons/com.bluecontrol.metricas.plist"
 PLIST_WDG      = "/Library/LaunchDaemons/com.bluecontrol.watchdog.plist"
 
@@ -99,7 +92,7 @@ def gerar_script(patrimonio: str, api_url: str, token: str, intervalo_min: int,
                  habilitar_ssh: bool, exe_metricas: str) -> str:
     """Script (roda como root via osascript): grava config.json, instala o
     agente de métricas como LaunchDaemon e, opcionalmente, habilita o SSH.
-    Sem VPN, sem senha de TI, sem mexer em usuários/admin."""
+    Sem senha de TI, sem mexer em usuários/admin."""
     api_url = api_url.rstrip("/")
     config_json = json.dumps({
         "patrimonio": patrimonio,

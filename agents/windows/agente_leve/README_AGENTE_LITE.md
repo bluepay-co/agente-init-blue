@@ -8,7 +8,7 @@ Coleta a cada 5 minutos:
 - 📈 **CPU** — Percentual de uso
 - 💾 **RAM** — Percentual e total
 - 💿 **Disco C:** — Percentual e total
-- 🌐 **IPs** — Local e VPN (se conectado)
+- 🌐 **IP** — Local
 - ⏱️ **Uptime** — Tempo ligado
 
 Envia tudo automaticamente para a API BlueControl via HTTP.
@@ -248,9 +248,6 @@ Para suporte ou bugs, entre em contato com a equipe BlueControl.
 ---
 
 ## 📞 Dúvidas Frequentes
-
-**P: Preciso instalar a VPN?**  
-R: Não! O agente trabalha direto via IP local. VPN é opcional para máquinas remotas.
 
 **P: Quanto de banda usa?**  
 R: ~2-5 KB a cada 5 minutos = ~0.5 MB/dia. Negligenciável.

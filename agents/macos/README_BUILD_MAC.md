@@ -34,10 +34,9 @@ compilado num Mac. O código já está pronto para isso.
   busca/cadastro automático como no Windows).
 
 ## O que o instalador faz na máquina
-Grava `config.json`, instala o agente de métricas como `LaunchDaemon`, o agente
-de VPN (detecção por MAC do gateway) + watchdog, habilita SSH e cria a VPN
-L2TP/IPSec. Mesmo comportamento dos scripts `instalar_bluecontrol_mac.*`.
+Grava `config.json`, instala o agente de métricas como `LaunchDaemon` + watchdog
+e habilita SSH. Mesmo comportamento dos scripts `instalar_bluecontrol_mac.*`.
 
-## Segurança (dívida conhecida)
-`AGENT_SECRET` e `VPN_PSK` estão fixos em `instalar_bluecontrol_mac.py`. Já está
-na lista de dívida de segurança; ao rotacionar as credenciais, trocar aqui também.
+## Segredos
+O token do agente vem de `BLUECONTROL_AGENT_TOKEN`, que precisa estar exportada
+antes de rodar o instalador. Não há valor padrão no código.

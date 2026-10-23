@@ -1,10 +1,8 @@
 param(
-    [string]$IpVpn,
     [string]$IpLocal,
     [string]$UsuarioAdmin = "Administrador"
 )
 
-$IpVpn   = "$IpVpn".Trim()
 $IpLocal = "$IpLocal".Trim()
 
 function Testar-Ping {
@@ -20,11 +18,10 @@ $nova_senha_random = "ComplexA#$(Get-Random -Minimum 1000 -Maximum 9999)!"
 
 Clear-Host
 Write-Output "INICIANDO BLOQUEIO"
-Write-Output "VPN: [$IpVpn]"
 Write-Output "LOCAL: [$IpLocal]"
 
 # Autoriza os IPs no TrustedHosts
-Set-Item WSMan:\localhost\Client\TrustedHosts -Value "$IpVpn,$IpLocal" -Force
+Set-Item WSMan:\localhost\Client\TrustedHosts -Value "$IpLocal" -Force
 
 # Solicita credencial de admin
 $senha_admin = ConvertTo-SecureString "Sham23*" -AsPlainText -Force
@@ -84,7 +81,7 @@ function Executar-BloqueioRemoto {
 
 Write-Output "PROCURANDO_ALVO"
 
-# --- 1. TENTA LOCAL PRIMEIRO ---
+# --- 1. TENTA LOCAL ---
 if ($IpLocal) {
     $pingLocal = Testar-Ping -Ip $IpLocal
 
@@ -103,25 +100,6 @@ if ($IpLocal) {
     }
 }
 
-# --- 2. TENTA VPN ---
-if ($IpVpn) {
-    $pingVpn = Testar-Ping -Ip $IpVpn
-
-    if ($pingVpn) {
-        Write-Output "ALVO_ENCONTRADO_VPN:$IpVpn"
-
-        try {
-            Write-Output "EXECUTANDO_BLOQUEIO:vpn"
-            Executar-BloqueioRemoto -AlvoIp $IpVpn -Credencial $cred -SenhaNova $nova_senha_random
-            Write-Output "SUCESSO_BLOQUEIO:vpn"
-            exit 0
-        }
-        catch {
-            Write-Output "FALHA_VPN"
-        }
-    }
-}
-
-# --- 3. SE NADA FUNCIONOU ---
+# --- 2. SE NADA FUNCIONOU ---
 Write-Output "ALVO_OFFLINE"
 exit 2

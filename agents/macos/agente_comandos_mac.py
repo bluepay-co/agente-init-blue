@@ -3,7 +3,7 @@ BlueControl IT — Agente de Comandos para macOS
 ================================================
 Roda como LaunchDaemon (root). A cada 30 segundos consulta a API
 do servidor para verificar se há um comando pendente (bloquear/desbloquear).
-Não depende de VPN — faz polling HTTP direto para o servidor.
+Faz polling HTTP direto para o servidor.
 
 Instalar:
   sudo cp agente_comandos_mac.py /usr/local/bluecontrol/
