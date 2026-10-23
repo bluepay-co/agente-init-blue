@@ -32,17 +32,21 @@ installers/SlackSetup.exe
 # ─────────────────────────────────────────────
 #  ARTEFATOS DE BUILD
 # ─────────────────────────────────────────────
+# PyInstaller gera build/ e dist/ em cada projeto (raiz, agents/windows,
+# agents/windows/configurador, agents/windows/agente_leve). As regras valem em
+# qualquer nivel: sem a barra inicial, o padrao casa em qualquer subpasta.
 dist/
-build/AgenteBlue/
-build/*.toc
-build/*.pkg
-build/*.pyz
+build/
 build_log.txt
 *.manifest
+*.pyz
+*.pkg
+*.toc
+base_library.zip
+xref-*.html
 
-# PyInstaller: versionamos apenas o nosso .spec
-*.spec
-!build/AgenteBlue.spec
+# PyInstaller: versionamos apenas os .spec, que sao fonte
+!*.spec
 
 # ─────────────────────────────────────────────
 #  PYTHON
