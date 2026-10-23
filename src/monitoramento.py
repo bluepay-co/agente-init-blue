@@ -101,15 +101,30 @@ def _progresso(pct: int, texto: str, ok: bool = False, erro: bool = False):
 #  API DO BLUECONTROL
 # ══════════════════════════════════════════════
 
+def normalizar_url(url: str) -> Tuple[str, str]:
+    """Devolve (url_limpa, erro). A URL vem de um campo de texto que o técnico
+    edita, então apagar o "http://" é acidente comum — e sem esquema o urllib
+    estoura antes de qualquer requisição. Completa o que falta e rejeita o que
+    não dá para consertar."""
+    limpa = (url or "").strip().rstrip("/")
+    if not limpa:
+        return "", "URL da API em branco — preencha o campo em \"Servidor\"."
+    if "://" not in limpa:
+        limpa = "http://" + limpa          # "192.168.10.11:8550" -> com esquema
+    if not limpa.startswith(("http://", "https://")):
+        return "", f"URL da API inválida ({url}) — precisa começar com http://."
+    return limpa, ""
+
+
 def _http_json(method: str, url: str, token: str, body: Optional[dict] = None,
                timeout: int = 10) -> Tuple[int, dict]:
     """Status 0 significa que não houve resposta HTTP nenhuma (falha de rede),
     o que a interface precisa distinguir de um 401/404 vindo do servidor."""
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("X-Agent-Token", token)
-    req.add_header("Content-Type", "application/json")
     try:
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("X-Agent-Token", token)
+        req.add_header("Content-Type", "application/json")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
@@ -120,19 +135,35 @@ def _http_json(method: str, url: str, token: str, body: Optional[dict] = None,
         return e.code, {"detail": detail}
     except urllib.error.URLError as e:
         return 0, {"detail": f"Não foi possível conectar em {url} ({e.reason})"}
+    except Exception as e:
+        # Rede à parte, o que sobra é URL malformada (ValueError na montagem do
+        # Request) ou resposta que não é JSON. Sem este ramo a exceção sobe pelo
+        # handler e o navegador recebe a conexão fechada, sem explicação
+        # nenhuma na tela.
+        return 0, {"detail": f"Falha ao falar com {url or '(URL vazia)'}: {e}"}
 
 
 def buscar(url_api: str, token: str, q: str) -> Tuple[int, dict]:
     """Procura máquinas já cadastradas. Devolve (status, corpo) porque a
     interface mostra o erro do BlueControl como ele veio."""
-    alvo = (f"{url_api.rstrip('/')}/api/agente/equipamentos/buscar"
-            f"?q={urllib.parse.quote(q or '')}")
+    base, erro = normalizar_url(url_api)
+    if erro:
+        return 0, {"detail": erro}
+    if not token:
+        return 0, {"detail": "Token do agente em branco — preencha o campo em "
+                             "\"Servidor\"."}
+    alvo = f"{base}/api/agente/equipamentos/buscar?q={urllib.parse.quote(q or '')}"
     return _http_json("GET", alvo, token)
 
 
 def cadastrar(url_api: str, token: str, dados: dict) -> Tuple[int, dict]:
-    return _http_json("POST", f"{url_api.rstrip('/')}/api/agente/equipamentos",
-                      token, dados)
+    base, erro = normalizar_url(url_api)
+    if erro:
+        return 0, {"detail": erro}
+    if not token:
+        return 0, {"detail": "Token do agente em branco — preencha o campo em "
+                             "\"Servidor\"."}
+    return _http_json("POST", f"{base}/api/agente/equipamentos", token, dados)
 
 
 # ══════════════════════════════════════════════
@@ -373,12 +404,19 @@ def instalar(params: dict) -> None:
     """Roda em thread separada: publica o andamento por SSE e não retorna nada."""
     try:
         patrimonio = (params.get("patrimonio") or "").strip()
-        url_api    = (params.get("url_api") or "").strip().rstrip("/")
         token      = params.get("token_agente") or ""
-        intervalo  = int(params.get("intervalo_segundos") or DEFAULT_INTERVALO)
+        try:
+            intervalo = int(params.get("intervalo_segundos") or DEFAULT_INTERVALO)
+        except (TypeError, ValueError):
+            intervalo = DEFAULT_INTERVALO
 
-        if not patrimonio or not url_api or not token:
-            _log("Patrimônio, URL da API e token são obrigatórios.", "err")
+        # Normaliza antes de gravar: esta URL vai pro config.json que o
+        # BlueControl_Metricas.exe lê. Sem esquema, o serviço sobe e falha
+        # calado a cada coleta, e o sintoma aparece só no painel, dias depois.
+        url_api, erro_url = normalizar_url(params.get("url_api", ""))
+
+        if not patrimonio or not token or erro_url:
+            _log(erro_url or "Patrimônio e token são obrigatórios.", "err")
             _progresso(100, "Dados incompletos", erro=True)
             return
 

@@ -132,6 +132,33 @@ def main() -> int:
     checar("progresso sai no canal mon_*", '"mon_progresso"' in linha, True)
     resposta.close()
 
+    print("\n[7] URL da API malformada")
+    # A URL vem de um campo que o técnico edita. Antes, uma URL vazia estourava
+    # ValueError na montagem do urllib.request.Request -- exceção que não é
+    # HTTPError nem URLError, então subia pelo handler e o navegador recebia a
+    # conexão fechada, sem mensagem nenhuma na tela.
+    normalizar = agente.monitoramento.normalizar_url
+    checar("sem esquema ganha http://",
+           normalizar("192.168.10.11:8550")[0], "http://192.168.10.11:8550")
+    checar("barra final é removida",
+           normalizar("http://192.168.10.11:8550/")[0], "http://192.168.10.11:8550")
+    checar("vazia é recusada com motivo", bool(normalizar("")[1]), True)
+    checar("esquema não-HTTP é recusado", bool(normalizar("ftp://x")[1]), True)
+
+    for rota, corpo in (("buscar", {"url_api": "", "token_agente": "x", "q": "a"}),
+                        ("cadastrar", {"url_api": "ftp://x", "token_agente": "x"})):
+        pedido = urllib.request.Request(
+            f"{base}/api/monitoramento/{rota}", method="POST",
+            data=json.dumps(corpo).encode(),
+            headers=dict(autenticado, **{"Content-Type": "application/json"}))
+        try:
+            with urllib.request.urlopen(pedido, timeout=5) as r:
+                codigo, lido = r.status, json.loads(r.read())
+        except urllib.error.HTTPError as exc:
+            codigo, lido = exc.code, json.loads(exc.read() or b"{}")
+        checar(f"/{rota} responde em vez de derrubar", codigo, 502)
+        checar(f"/{rota} explica o motivo", bool(lido.get("detail")), True)
+
     servidor.shutdown()
     print("\n" + ("RESULTADO: tudo certo" if not _falhas else f"RESULTADO: {_falhas} falha(s)"))
     return 1 if _falhas else 0

@@ -19,6 +19,7 @@ let _monEventSource = null;
 let _monSelecionada = null;   // {patrimonio_interno, modelo, ...} quando veio da busca
 let _monBuscaTimer = null;
 let _monResultados = [];
+let _monPrefilled = false;    // URL/token já preenchidos uma vez (ver monCarregarStatus)
 
 // ── Status atual ─────────────────────────────
 
@@ -29,19 +30,26 @@ async function monCarregarStatus() {
     // Os campos avançados vêm ANTES do early return: numa máquina nova
     // (existe = false) eles são a única fonte de URL e token para buscar e
     // cadastrar. O /status devolve os padrões quando não há config.
-    if (d.url_api)      document.getElementById('monCfgUrlApi').value = d.url_api;
-    if (d.token_agente) document.getElementById('monCfgToken').value  = d.token_agente;
-    if (d.intervalo_segundos) {
-      document.getElementById('monCfgIntervalo').value = String(d.intervalo_segundos);
-    }
+    //
+    // Só preenche na PRIMEIRA carga: showView() chama esta função a cada
+    // entrada na aba, e sem o _monPrefilled uma URL que o técnico tivesse
+    // ajustado voltava ao padrão só por ele visitar outra aba e retornar.
+    if (!_monPrefilled) {
+      if (d.url_api)      document.getElementById('monCfgUrlApi').value = d.url_api;
+      if (d.token_agente) document.getElementById('monCfgToken').value  = d.token_agente;
+      if (d.intervalo_segundos) {
+        document.getElementById('monCfgIntervalo').value = String(d.intervalo_segundos);
+      }
 
-    // Avisa se os .exe dos agentes não vieram com este build — melhor saber
-    // agora do que no meio da instalação.
-    const faltando = Object.entries(d.agentes_disponiveis || {})
-      .filter(([, ok]) => !ok).map(([nome]) => nome);
-    if (faltando.length) {
-      monLog(`Atenção: ${faltando.join(', ')} não encontrado(s). Coloque a pasta `
-           + `agents\\ ao lado do AgenteBlue.exe.`, 'warn');
+      // Avisa se os .exe dos agentes não vieram com este build — melhor saber
+      // agora do que no meio da instalação. Uma vez, não a cada troca de aba.
+      const faltando = Object.entries(d.agentes_disponiveis || {})
+        .filter(([, ok]) => !ok).map(([nome]) => nome);
+      if (faltando.length) {
+        monLog(`Atenção: ${faltando.join(', ')} não encontrado(s). Coloque a pasta `
+             + `agents\\ ao lado do AgenteBlue.exe.`, 'warn');
+      }
+      _monPrefilled = true;
     }
 
     if (!d.existe) return;
@@ -117,7 +125,15 @@ async function monBuscarMaquinas(q) {
       box.innerHTML = `<div class="resultado-vazio">Erro: ${_monEsc(d.detail)}</div>`;
       return;
     }
-    if (!d.dados || !d.dados.length) {
+    // Sem "dados" e sem "detail" a resposta não é a que esperamos — dizer
+    // "nenhuma máquina encontrada" aqui mandaria o técnico procurar o problema
+    // no termo de busca, quando ele está no servidor.
+    if (!Array.isArray(d.dados)) {
+      box.innerHTML = '<div class="resultado-vazio">Resposta inesperada do '
+                    + 'BlueControl — confira a URL da API em "Servidor".</div>';
+      return;
+    }
+    if (!d.dados.length) {
       box.innerHTML = '<div class="resultado-vazio">Nenhuma máquina encontrada '
                     + 'com esse termo.</div>';
       return;
