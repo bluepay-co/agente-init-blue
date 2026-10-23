@@ -35,8 +35,12 @@ installers/SlackSetup.exe
 # PyInstaller gera build/ e dist/ em cada projeto (raiz, agents/windows,
 # agents/windows/configurador, agents/windows/agente_leve). As regras valem em
 # qualquer nivel: sem a barra inicial, o padrao casa em qualquer subpasta.
+#
+# build/*/ e nao build/: o build/ da raiz guarda fonte (AgenteBlue.spec,
+# compilar.ps1). O PyInstaller escreve so em build/<nome do alvo>/, um nivel
+# abaixo -- e e isso que ignoramos.
 dist/
-build/
+build/*/
 build_log.txt
 *.manifest
 *.pyz
