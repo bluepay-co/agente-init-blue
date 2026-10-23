@@ -52,6 +52,21 @@ async function monCarregarStatus() {
       _monPrefilled = true;
     }
 
+    // Nº de série lido da BIOS. Fica fora do _monPrefilled porque é o campo de
+    // cadastro, não de configuração: se o técnico ainda não digitou nada ali,
+    // preenche; se digitou (BIOS com lixo, série da etiqueta), não mexe.
+    const serie = document.getElementById('monCadSerie');
+    if (d.numero_serie && serie && !serie.value.trim()) {
+      serie.value = d.numero_serie;
+      serie.classList.add('auto-detectado');
+      serie.title = 'Lido da BIOS desta máquina — edite se não bater com a etiqueta.';
+      const nota = document.getElementById('monSerieNota');
+      if (nota) {
+        nota.textContent = 'detectado automaticamente';
+        nota.style.display = 'inline';
+      }
+    }
+
     if (!d.existe) return;
 
     document.getElementById('monStatusCard').style.display = 'block';

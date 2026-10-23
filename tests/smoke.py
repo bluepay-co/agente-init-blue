@@ -133,7 +133,20 @@ def main() -> int:
     checar("progresso sai no canal mon_*", '"mon_progresso"' in linha, True)
     resposta.close()
 
-    print("\n[7] URL da API malformada")
+    print("\n[7] Nº de série lido da BIOS")
+    # Fabricante que não preenche o campo grava um texto de preenchimento, e ele
+    # chega como se fosse série. Cadastrado, daria dez máquinas com o mesmo
+    # "To Be Filled By O.E.M." no BlueControl -- pior que vazio, porque parece
+    # legítimo. Só o que sobra deste filtro preenche o campo sozinho.
+    valido = agente.monitoramento._serial_valido
+    for bruto in ("5CG812ABCD", "JH7KL32", "  PF2ABCDE  "):
+        checar(f"aceita série real {bruto.strip()!r}", valido(bruto), bruto.strip())
+    for lixo in ("To Be Filled By O.E.M.", "System Serial Number", "Default string",
+                 "None", "", "   ", "0", "...", "AB"):
+        checar(f"descarta {lixo!r}", valido(lixo), "")
+    checar("/status expõe 'numero_serie'", "numero_serie" in corpo, True)
+
+    print("\n[8] URL da API malformada")
     # A URL vem de um campo que o técnico edita. Antes, uma URL vazia estourava
     # ValueError na montagem do urllib.request.Request -- exceção que não é
     # HTTPError nem URLError, então subia pelo handler e o navegador recebia a

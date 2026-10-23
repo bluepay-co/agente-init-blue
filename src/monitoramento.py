@@ -167,6 +167,75 @@ def cadastrar(url_api: str, token: str, dados: dict) -> Tuple[int, dict]:
 
 
 # ══════════════════════════════════════════════
+#  IDENTIFICAÇÃO DO HARDWARE
+# ══════════════════════════════════════════════
+
+# Valores que fabricantes gravam na BIOS quando NÃO preencheram o campo. Vêm
+# como se fossem série e, cadastrados, dariam dez máquinas com o mesmo
+# "To Be Filled By O.E.M." no BlueControl — pior do que o campo vazio, porque
+# parecem legítimos. Comparados em minúsculas e sem espaços.
+_SERIAL_INVALIDO = {
+    "", "0", "none", "null", "n/a", "na", "notapplicable", "notspecified",
+    "default string", "defaultstring", "system serial number",
+    "systemserialnumber", "to be filled by o.e.m.", "tobefilledbyo.e.m.",
+    "to be filled by oem", "tobefilledbyoem", "chassis serial number",
+    "chassisserialnumber", "serial number", "serialnumber", "invalid",
+    "unknown", "xxxxxxx", "0123456789",
+}
+
+# A série não muda enquanto a máquina é a mesma, e o /status é chamado toda vez
+# que a aba abre: sem cache seria um PowerShell a cada troca de aba.
+_serial_cache: Optional[str] = None
+
+
+def _serial_valido(valor: str) -> str:
+    limpo = (valor or "").strip()
+    if limpo.lower().replace(" ", "") in _SERIAL_INVALIDO:
+        return ""
+    if limpo.lower() in _SERIAL_INVALIDO:
+        return ""
+    # Série de 1 caractere, ou só pontuação, é sujeira de BIOS.
+    if len(limpo) < 3 or not any(c.isalnum() for c in limpo):
+        return ""
+    return limpo
+
+
+def serial_maquina() -> str:
+    """Número de série da máquina, lido da BIOS.
+
+    Win32_BIOS.SerialNumber é o que o fabricante grava e o que está na etiqueta
+    (Dell chama de Service Tag, Lenovo de Serial Number). Quando vem vazio ou
+    com texto de preenchimento, tenta o Win32_ComputerSystemProduct, que em
+    algumas placas é o campo preenchido.
+    """
+    global _serial_cache
+    if _serial_cache is not None:
+        return _serial_cache
+
+    ps = (
+        "$ErrorActionPreference='SilentlyContinue';"
+        "$s = (Get-CimInstance -ClassName Win32_BIOS).SerialNumber;"
+        "if ([string]::IsNullOrWhiteSpace($s)) {"
+        "  $s = (Get-CimInstance -ClassName Win32_ComputerSystemProduct).IdentifyingNumber"
+        "};"
+        "Write-Output $s"
+    )
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            capture_output=True, text=True, timeout=30, creationflags=_NO_WINDOW,
+        )
+        bruto = (r.stdout or "").strip().splitlines()
+        serial = _serial_valido(bruto[0] if bruto else "")
+    except Exception as e:
+        _registrar(f"[monitoramento] Falha ao ler o número de série: {e}")
+        serial = ""
+
+    _serial_cache = serial
+    return serial
+
+
+# ══════════════════════════════════════════════
 #  ESTADO ATUAL DA MÁQUINA
 # ══════════════════════════════════════════════
 
@@ -205,6 +274,9 @@ def status() -> dict:
         "token_agente": cfg.get("token_agente") or cfg.get("agent_secret") or "",
         "intervalo_segundos": cfg.get("intervalo_segundos", DEFAULT_INTERVALO),
         "servico":    servico,
+        # Preenche o "Nº de série" do cadastro sozinho. Vazio quando a BIOS não
+        # traz série utilizável — aí o campo fica livre para digitar da etiqueta.
+        "numero_serie": serial_maquina(),
         "agentes_disponiveis": {
             AGENTE_EXE: _origem_exe(AGENTE_EXE) is not None,
             REMOTE_EXE: _origem_exe(REMOTE_EXE) is not None,

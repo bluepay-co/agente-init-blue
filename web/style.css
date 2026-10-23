@@ -1080,3 +1080,19 @@ input:checked + .slider:before {
   color: var(--blue);
 }
 .card-label-acao:hover { text-decoration: underline; }
+
+/* Campo preenchido sozinho (ex: nº de série lido da BIOS). Fica visivelmente
+   diferente do digitado: o técnico precisa notar que já veio algo ali antes de
+   mandar pro cadastro. */
+.campo-nota {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--green);
+  margin-left: 6px;
+}
+.field input.auto-detectado {
+  border-color: var(--green);
+  font-family: var(--font-mono);
+}
