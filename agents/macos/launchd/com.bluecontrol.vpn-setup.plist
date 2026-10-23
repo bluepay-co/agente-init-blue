@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bluecontrol.vpn-setup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/usr/local/bluecontrol/vpn_setup.sh</string>
+    </array>
+
+    <!-- Roda como root para poder escrever no preferences.plist -->
+    <key>UserName</key>
+    <string>root</string>
+
+    <!-- Só precisa rodar ao carregar o sistema (uma verificação por boot) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Não manter vivo — roda uma vez e sai -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/usr/local/bluecontrol/vpn_setup.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/usr/local/bluecontrol/vpn_setup.log</string>
+</dict>
+</plist>

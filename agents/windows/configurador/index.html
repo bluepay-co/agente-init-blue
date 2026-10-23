@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Configurador — Agente BlueControl</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <div class="window">
+    <div class="content">
+
+      <!-- Cabeçalho -->
+      <div class="header">
+        <div class="logo-wrap">
+          <div class="app-logo-fallback">B</div>
+        </div>
+        <h1 class="app-title">Agente BlueControl</h1>
+        <p class="app-subtitle">Configurador de Monitoramento</p>
+        <p class="app-version">v1.0 — BlueControl IT</p>
+      </div>
+
+      <!-- Status atual (só aparece se já tiver config.json) -->
+      <div class="card" id="statusCard" style="display:none">
+        <p class="card-label">Situação Atual</p>
+        <div class="status-row">
+          <span class="status-dot" id="statusDot"></span>
+          <span class="status-text">
+            <strong id="statusPatrimonio">—</strong>
+            <small id="statusDetalhe">—</small>
+          </span>
+        </div>
+      </div>
+
+      <!-- Escolha da máquina -->
+      <div class="card">
+        <p class="card-label">Máquina</p>
+
+        <div class="tabs">
+          <button class="tab-btn active" id="tabBtnBuscar" onclick="mudarTab('buscar')">Já cadastrada</button>
+          <button class="tab-btn" id="tabBtnCadastrar" onclick="mudarTab('cadastrar')">Cadastrar nova</button>
+        </div>
+
+        <!-- Buscar existente -->
+        <div class="tab-panel active" id="tabBuscar">
+          <div class="field">
+            <label>Buscar por nome, patrimônio ou nº de série</label>
+            <input type="text" id="inpBusca" placeholder="Ex: Notebook Ana, 0033..." oninput="onBuscaInput()">
+          </div>
+          <div class="resultados" id="resultados"></div>
+          <div class="selecionado-banner" id="selecionadoBanner">
+            <span>✔</span>
+            <span>Selecionado: <strong id="selecionadoNome">—</strong></span>
+          </div>
+        </div>
+
+        <!-- Cadastrar nova -->
+        <div class="tab-panel" id="tabCadastrar">
+          <div class="field">
+            <label>Nome da máquina *</label>
+            <input type="text" id="cadNome" placeholder="Ex: Notebook Recepção">
+          </div>
+          <div class="field">
+            <label>Responsável</label>
+            <input type="text" id="cadResponsavel" placeholder="Nome do colaborador">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Locadora</label>
+              <input type="text" id="cadLocadora" placeholder="Ex: Allugg">
+            </div>
+            <div class="field">
+              <label>Categoria</label>
+              <select id="cadCategoria">
+                <option value="Notebooks">Notebook</option>
+                <option value="Desktop">Desktop</option>
+                <option value="Servidor">Servidor</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Setor</label>
+              <input type="text" id="cadSetor" placeholder="Ex: TI">
+            </div>
+            <div class="field">
+              <label>Nº de série</label>
+              <input type="text" id="cadSerie" placeholder="Opcional">
+            </div>
+          </div>
+          <p class="hint">O número de patrimônio é gerado automaticamente ao instalar.</p>
+        </div>
+      </div>
+
+      <!-- Servidor (avançado) -->
+      <div class="card">
+        <p class="card-label">
+          Servidor
+          <span style="cursor:pointer;font-weight:400;text-transform:none;letter-spacing:0" onclick="toggleAvancado()" id="avancadoToggle">mostrar</span>
+        </p>
+        <div id="avancadoFields" style="display:none;flex-direction:column;gap:10px">
+          <div class="field">
+            <label>URL da API</label>
+            <input type="text" id="cfgUrlApi" value="http://192.168.0.17:8550">
+          </div>
+          <div class="field">
+            <label>Token do agente</label>
+            <input type="text" id="cfgToken" value="" placeholder="token fornecido pelo administrador">
+          </div>
+          <div class="field">
+            <label>Intervalo de coleta</label>
+            <select id="cfgIntervalo">
+              <option value="60">1 minuto</option>
+              <option value="300" selected>5 minutos (recomendado)</option>
+              <option value="600">10 minutos</option>
+              <option value="900">15 minutos</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Log de instalação -->
+      <div class="log-box" id="logBox"></div>
+
+      <!-- Progresso -->
+      <div class="progress-section" id="progressSection">
+        <div class="progress-bar-wrap">
+          <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <p class="progress-label" id="progressLabel">Aguardando…</p>
+      </div>
+
+      <!-- Botão principal -->
+      <button class="btn-executar" id="btnInstalar" onclick="instalar()">Salvar e Instalar</button>
+
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+
+</html>

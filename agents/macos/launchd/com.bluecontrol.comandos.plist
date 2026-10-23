@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bluecontrol.comandos</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/usr/local/bluecontrol/agente_comandos_mac.py</string>
+    </array>
+
+    <!-- Roda como root para poder executar bloqueio/desbloqueio -->
+    <key>UserName</key>
+    <string>root</string>
+
+    <!-- Reinicia automaticamente se travar ou sair com erro -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Inicia ao carregar o sistema -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/usr/local/bluecontrol/comandos_out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/usr/local/bluecontrol/comandos_err.log</string>
+
+    <!-- Reinicia após 30s em caso de crash -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>
