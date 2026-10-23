@@ -652,6 +652,32 @@ input:checked + .slider:before {
 .u-msg.ok   { color: var(--green); }
 .u-msg.err  { color: var(--red); }
 .u-msg.info { color: var(--blue); }
+.u-msg.warn { color: var(--yellow); }
+
+/* ── Nome da máquina (aba Usuários) ── */
+.host-atual {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.host-atual strong {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+.host-rotulo {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
 
 /* ── Lista ── */
 .user-list-head {

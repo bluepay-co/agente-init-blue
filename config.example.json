@@ -7,11 +7,6 @@
     "senha": "DEFINA_A_SENHA_DO_ADMINISTRADOR"
   },
 
-  "usuarios": [
-    { "nome": "Suporte",       "senha": "DEFINA_A_SENHA", "admin": true, "builtin_admin": false },
-    { "nome": "Administrador", "senha": "DEFINA_A_SENHA", "admin": true, "builtin_admin": true  }
-  ],
-
   "integridade": {
     "_comentario": "Verificação de integridade ao final. modo='rapido' (só sfc /scannow, recomendado) ou 'completo' (DISM RestoreHealth + sfc, bem mais lento).",
     "habilitar": true,

@@ -3,7 +3,9 @@
 //  SSE + fetch — puro JavaScript, sem dependências
 // ============================================
 
-const ETAPAS = ['downloads', 'wallpaper', 'rede', 'smb', 'usuarios', 'otimizacao', 'integridade'];
+// Sem 'usuarios': o setup não cria mais contas locais sozinho — elas saem da
+// aba Usuários, uma a uma.
+const ETAPAS = ['downloads', 'wallpaper', 'rede', 'smb', 'otimizacao', 'integridade'];
 let _eventSource = null;
 let _swTotal = 7;   // AnyDesk + Chrome + Adobe + Office + WinRAR + Google Drive + Slack
 let _swDone  = 0;
@@ -259,10 +261,6 @@ function _demoMode() {
     () => handleEvent({ data: JSON.stringify({ type: 'etapa_inicio', etapa: 'smb', pct: 82 }) }),
     () => handleEvent({ data: JSON.stringify({ type: 'log', msg: '  ✔  SMB configurado', tipo: 'ok' }) }),
     () => handleEvent({ data: JSON.stringify({ type: 'etapa_fim', etapa: 'smb', sucesso: true, pct: 88 }) }),
-
-    () => handleEvent({ data: JSON.stringify({ type: 'etapa_inicio', etapa: 'usuarios', pct: 90 }) }),
-    () => handleEvent({ data: JSON.stringify({ type: 'log', msg: '  👥  Usuários Suporte e Administrador criados', tipo: 'ok' }) }),
-    () => handleEvent({ data: JSON.stringify({ type: 'etapa_fim', etapa: 'usuarios', sucesso: true, pct: 95 }) }),
 
     () => handleEvent({ data: JSON.stringify({ type: 'setup_fim', sucesso: true }) }),
   ];

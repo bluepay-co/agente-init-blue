@@ -19,7 +19,7 @@ function showView(view) {
     if (t) t.classList.toggle('active', k === view);
   });
 
-  if (view === 'users') carregarUsuarios();
+  if (view === 'users') { carregarUsuarios(); carregarHostname(); }
   if (view === 'programs' && typeof carregarProgramas === 'function') carregarProgramas();
   if (view === 'monitor' && typeof monCarregarStatus === 'function') monCarregarStatus();
 }
@@ -222,4 +222,53 @@ async function confirmarExcluir(sid) {
 function fecharPanel(sid) {
   const panel = document.getElementById('panel-' + sid);
   if (panel) { panel.dataset.open = ''; panel.innerHTML = ''; }
+}
+
+// ── Nome da máquina ──────────────────────────────────────────────────────────
+// É por este nome que o equipamento aparece no pfSense (lease de DHCP).
+
+async function carregarHostname() {
+  const elAtual = document.getElementById('host-atual');
+  const elPend  = document.getElementById('host-pendente');
+  try {
+    const d = await apiGet('/api/usuarios/hostname');
+    if (!d.ok) { elAtual.textContent = '—'; return; }
+
+    elAtual.textContent = d.atual || '—';
+    // Campo começa com o nome atual: quase sempre o técnico ajusta o que já
+    // existe em vez de digitar do zero.
+    const campo = document.getElementById('host-novo');
+    if (!campo.value) campo.value = d.atual || '';
+
+    if (d.pendente) {
+      elPend.style.display = 'block';
+      elPend.textContent = `Reinício pendente: vira "${d.pendente}" no próximo boot.`;
+    } else {
+      elPend.style.display = 'none';
+    }
+  } catch (e) {
+    elAtual.textContent = '—';
+  }
+}
+
+async function renomearMaquina() {
+  const campo = document.getElementById('host-novo');
+  const msg   = document.getElementById('host-msg');
+  const novo  = campo.value.trim();
+
+  if (!novo) { _msg(msg, 'Informe o novo nome da máquina.', 'err'); return; }
+
+  const btn = msg.parentElement.querySelector('.btn-user.primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Renomeando…'; }
+  _msg(msg, 'Renomeando…', '');
+
+  const d = await _post('/api/usuarios/hostname', { novo_nome: novo });
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Renomear máquina'; }
+  if (d.ok) {
+    _msg(msg, d.msg || 'Nome alterado. Reinicie a máquina.', 'ok');
+    carregarHostname();
+  } else {
+    _msg(msg, d.erro || 'Falha ao renomear a máquina.', 'err');
+  }
 }

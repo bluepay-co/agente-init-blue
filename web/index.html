@@ -111,14 +111,6 @@
             <span class="step-badge" id="badge-smb">Pendente</span>
           </div>
 
-          <div class="module-item" id="step-usuarios">
-            <span class="custom-radio" id="radio-usuarios"></span>
-            <span class="module-text">
-              <strong>Usuários</strong> — Criação de Suporte e Administrador
-            </span>
-            <span class="step-badge" id="badge-usuarios">Pendente</span>
-          </div>
-
           <div class="module-item" id="step-otimizacao">
             <span class="custom-radio" id="radio-otimizacao"></span>
             <span class="module-text">
@@ -259,6 +251,24 @@
 
       <!-- ══════════ VIEW: GERENCIAR USUÁRIOS ══════════ -->
       <div id="viewUsers" style="display:none;">
+
+        <!-- Nome da máquina: é por ele que o equipamento aparece no pfSense -->
+        <div class="card">
+          <p class="card-label">Nome da Máquina</p>
+          <div class="user-form">
+            <div class="host-atual">
+              <span class="host-rotulo">Agora</span>
+              <strong id="host-atual">…</strong>
+            </div>
+            <p class="u-msg warn" id="host-pendente" style="display:none;"></p>
+            <input id="host-novo" class="u-input" placeholder="Novo nome (ex: BLUE-NB-014)"
+                   maxlength="15" autocomplete="off">
+            <p class="hint">Até 15 caracteres: letras, números e hífen. Vale após
+               reiniciar — é no boot que o DHCP informa o nome novo ao pfSense.</p>
+            <button class="btn-user primary" onclick="renomearMaquina()">Renomear máquina</button>
+          </div>
+          <p class="u-msg" id="host-msg"></p>
+        </div>
 
         <!-- Criar usuário -->
         <div class="card">

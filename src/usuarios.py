@@ -439,3 +439,99 @@ try {{
         _log(f"[usuarios] Excluído: {est.get('nome')} (perfil apagado={apagar_perfil})", "ok")
         return {"ok": True, "msg": f"Usuário '{est.get('nome')}' excluído."}
     return {"ok": False, "erro": err or "Falha ao excluir o usuário."}
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  NOME DA MÁQUINA (hostname)
+#
+#  É por este nome que a máquina aparece no pfSense (lease de DHCP) e na rede.
+#  Renomear exige reinício: o Windows guarda o nome novo numa chave separada e
+#  só promove a ativa no boot — por isso lemos as duas e dizemos se há troca
+#  pendente, em vez de afirmar que já mudou.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_REG_NOMES = r"HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName"
+
+# NetBIOS: 15 caracteres, só letras, dígitos e hífen. Um nome só de dígitos é
+# recusado pelo Windows (confunde com endereço IP).
+_HOST_VALIDO = re.compile(r"^[A-Za-z0-9-]{1,15}$")
+
+
+def _validar_hostname(nome: str) -> Optional[str]:
+    nome = (nome or "").strip()
+    if not nome:
+        return "Informe o nome da máquina."
+    if len(nome) > 15:
+        return "O nome da máquina deve ter no máximo 15 caracteres (limite do Windows)."
+    if not _HOST_VALIDO.match(nome):
+        return "Use apenas letras, números e hífen — sem espaços nem acentos."
+    if nome.strip("-") == "":
+        return "O nome não pode ser só hífens."
+    if nome.startswith("-") or nome.endswith("-"):
+        return "O nome não pode começar nem terminar com hífen."
+    if nome.isdigit():
+        return "O nome não pode ser só números."
+    return None
+
+
+def hostname() -> dict:
+    """Nome atual da máquina e, se houver, o nome que entra no próximo boot."""
+    script = f"""
+$ErrorActionPreference = 'SilentlyContinue'
+$ativo    = (Get-ItemProperty '{_REG_NOMES}\\ActiveComputerName').ComputerName
+$proximo  = (Get-ItemProperty '{_REG_NOMES}\\ComputerName').ComputerName
+$dominio  = (Get-CimInstance Win32_ComputerSystem).PartOfDomain
+[pscustomobject]@{{
+  atual     = $ativo
+  proximo   = $proximo
+  emDominio = [bool]$dominio
+}} | ConvertTo-Json -Compress
+"""
+    rc, out, err = _run_ps(script, timeout=45)
+    if rc != 0 or not out:
+        return {"ok": False, "erro": err or "Não consegui ler o nome da máquina."}
+    try:
+        d = json.loads(out)
+    except Exception:
+        return {"ok": False, "erro": "Resposta inesperada ao ler o nome da máquina."}
+
+    atual, proximo = d.get("atual") or "", d.get("proximo") or ""
+    return {
+        "ok": True,
+        "atual": atual,
+        "pendente": proximo if proximo and proximo != atual else "",
+        "em_dominio": bool(d.get("emDominio")),
+    }
+
+
+def renomear_maquina(novo_nome: str) -> dict:
+    """Renomeia a máquina. Só vale após reiniciar — e é só depois do reboot,
+    quando o DHCP renova, que o nome novo aparece no pfSense."""
+    novo_nome = (novo_nome or "").strip()
+    erro = _validar_hostname(novo_nome)
+    if erro:
+        return {"ok": False, "erro": erro}
+
+    atual = hostname()
+    if not atual.get("ok"):
+        return atual
+    if atual.get("atual", "").lower() == novo_nome.lower() and not atual.get("pendente"):
+        return {"ok": False, "erro": "A máquina já se chama assim."}
+    if atual.get("em_dominio"):
+        # Renomear máquina de domínio exige credencial do domínio; sem ela o
+        # Rename-Computer falha no meio e a conta no AD fica fora de sincronia.
+        return {"ok": False,
+                "erro": "Esta máquina está em domínio — renomeie pelo Active "
+                        "Directory, não por aqui."}
+
+    script = f"Rename-Computer -NewName '{_psq(novo_nome)}' -Force -ErrorAction Stop"
+    rc, out, err = _run_ps(script, timeout=90)
+    if rc != 0:
+        _log(f"[usuarios] Falha ao renomear a máquina: {err}", "warn")
+        return {"ok": False, "erro": err or "Falha ao renomear a máquina."}
+
+    _log(f"[usuarios] Máquina renomeada: {atual.get('atual')} → {novo_nome} "
+         f"(efetiva no próximo boot)", "ok")
+    return {"ok": True, "pendente": novo_nome,
+            "msg": f"Nome alterado para '{novo_nome}'. Reinicie a máquina para "
+                   f"valer — só depois do boot ela aparece com o nome novo no "
+                   f"pfSense."}

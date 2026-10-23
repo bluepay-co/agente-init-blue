@@ -17,7 +17,7 @@ def checa(desc, ok):
 
 # Simula um config.json carregado com senhas reais.
 agente._ADMIN_PASS = "SenhaFalsaDeTeste#9"
-agente.USUARIOS = [{"nome": "Suporte", "senha": "SenhaDoSuporte1"}]
+agente._USUARIOS_LEGADO = [{"nome": "Suporte", "senha": "SenhaDoSuporte1"}]
 agente.SOFTWARES = [{"nome": "AnyDesk", "unattended_password": "SenhaAnyDesk9"}]
 
 capturado = []

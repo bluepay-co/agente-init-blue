@@ -118,14 +118,11 @@ _admin_cfg: dict = _CONFIG.get("admin", {})
 _ADMIN_USER: str = _admin_cfg.get("usuario", r".\Administrator")
 _ADMIN_PASS: str = _admin_cfg.get("senha", "")
 
-# ─────────────────────────────────────────────
-#  USUÁRIOS LOCAIS (sempre criados/atualizados) — de config.json
-#    admin=True         → adiciona ao grupo Administradores (SID S-1-5-32-544)
-#    builtin_admin=True → alvo é a conta INTERNA de Administrador (SID …-500),
-#                         detectada pelo SID e não pelo nome (independe do idioma).
-#                         Se ela não existir, cria uma com o nome informado.
-# ─────────────────────────────────────────────
-USUARIOS: List[dict] = _CONFIG.get("usuarios", [])
+# A chave "usuarios" do config.json deixou de existir: o setup não cria mais
+# contas locais sozinho (ver run_automation). Contas são criadas sob demanda na
+# aba Usuários. A chave continua sendo lida aqui por um motivo só — mascarar as
+# senhas no log de quem ainda tiver um config.json antigo em disco.
+_USUARIOS_LEGADO: List[dict] = _CONFIG.get("usuarios", [])
 
 # ─────────────────────────────────────────────
 #  VERIFICAÇÃO DE INTEGRIDADE (de config.json)
@@ -305,6 +302,8 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response({"versao": __version__})
         elif self._rota() == "/api/usuarios/listar":
             self._json_response(usuarios.listar())
+        elif self._rota() == "/api/usuarios/hostname":
+            self._json_response(usuarios.hostname())
         elif self._rota() == "/api/programas/listar":
             self._json_response(programas.listar())
         elif self._rota() == "/api/monitoramento/status":
@@ -356,6 +355,10 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             p = self._read_json_body()
             self._json_response(usuarios.excluir(
                 p.get("sid", ""), bool(p.get("apagar_perfil", False))))
+
+        elif self._rota() == "/api/usuarios/hostname":
+            p = self._read_json_body()
+            self._json_response(usuarios.renomear_maquina(p.get("novo_nome", "")))
 
         elif self._rota() == "/api/programas/desinstalar":
             p = self._read_json_body()
@@ -445,7 +448,7 @@ def _find_free_port() -> int:
 def _segredos_conhecidos() -> List[str]:
     """Todas as senhas que o config.json carrega. Usadas só para mascarar."""
     valores = [_ADMIN_PASS]
-    valores += [u.get("senha", "") for u in USUARIOS]
+    valores += [u.get("senha", "") for u in _USUARIOS_LEGADO]
     valores += [a.get("unattended_password", "") for a in SOFTWARES]
     return [v for v in valores if v and len(v) >= 4]
 
@@ -1140,110 +1143,6 @@ def _etapa_smb() -> bool:
     return etapa_ok
 
 
-def _etapa_usuarios() -> bool:
-    """Cria/atualiza os usuários locais definidos em USUARIOS.
-    Usa o módulo Microsoft.PowerShell.LocalAccounts e referencia o grupo de
-    administradores pelo SID well-known (S-1-5-32-544), funcionando em Windows
-    PT-BR ou EN. A conta interna de Administrador é localizada pelo SID …-500."""
-    _etapa_inicio("usuarios", 66)
-    etapa_ok = True
-
-    if not USUARIOS:
-        _log("  Nenhum usuário configurado.", "muted")
-        _etapa_fim("usuarios", True, 72)
-        return True
-
-    def _esc(s: str) -> str:
-        return s.replace("'", "''")
-
-    linhas: List[str] = [
-        "$ErrorActionPreference = 'Continue'",
-        "# Nome do grupo de administradores pelo SID well-known (independe do idioma)",
-        "$adminGroup = (Get-LocalGroup -SID 'S-1-5-32-544').Name",
-        "",
-        "function Set-AdminMember([string]$Name) {",
-        "  try {",
-        "    Add-LocalGroupMember -Group $adminGroup -Member $Name -ErrorAction Stop",
-        "    Write-Host \"  [+] $Name adicionado ao grupo $adminGroup\"",
-        "  } catch {",
-        "    Write-Host \"  [=] $Name ja pertence ao grupo $adminGroup\"",
-        "  }",
-        "}",
-        "",
-    ]
-
-    for u in USUARIOS:
-        nome = _esc(u["nome"])
-        senha = _esc(u["senha"])
-        if u.get("builtin_admin"):
-            linhas += [
-                "# ── Conta INTERNA de Administrador (detectada pelo SID …-500) ──",
-                f"$senha = ConvertTo-SecureString '{senha}' -AsPlainText -Force",
-                "$builtin = Get-LocalUser | Where-Object { $_.SID.Value -like 'S-1-5-21-*-500' } | Select-Object -First 1",
-                "if ($builtin) {",
-                "  Set-LocalUser -Name $builtin.Name -Password $senha -PasswordNeverExpires $true",
-                "  Enable-LocalUser -Name $builtin.Name -ErrorAction SilentlyContinue",
-                "  Set-AdminMember $builtin.Name",
-                "  Write-Host \"  [*] Administrador interno atualizado: $($builtin.Name)\"",
-                "} else {",
-                f"  New-LocalUser -Name '{nome}' -Password $senha -FullName '{nome}' -PasswordNeverExpires -AccountNeverExpires | Out-Null",
-                f"  Set-AdminMember '{nome}'",
-                f"  Write-Host '  [*] Administrador criado: {nome}'",
-                "}",
-                "",
-            ]
-        else:
-            linhas += [
-                f"# ── Usuario: {nome} ──",
-                f"$senha = ConvertTo-SecureString '{senha}' -AsPlainText -Force",
-                f"if (Get-LocalUser -Name '{nome}' -ErrorAction SilentlyContinue) {{",
-                f"  Set-LocalUser -Name '{nome}' -Password $senha -PasswordNeverExpires $true",
-                f"  Enable-LocalUser -Name '{nome}' -ErrorAction SilentlyContinue",
-                f"  Write-Host '  [*] Atualizado: {nome}'",
-                "} else {",
-                f"  New-LocalUser -Name '{nome}' -Password $senha -FullName '{nome}' -PasswordNeverExpires -AccountNeverExpires | Out-Null",
-                f"  Write-Host '  [*] Criado: {nome}'",
-                "}",
-            ]
-            linhas += [f"Set-AdminMember '{nome}'", ""] if u.get("admin") else [""]
-
-    script_dir = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
-    script_dir.mkdir(parents=True, exist_ok=True)
-    ps_file = script_dir / "criar_usuarios.ps1"
-    # O script carrega as senhas de todos os usuários: nasce restrito a
-    # administradores e é apagado no finally, aconteça o que acontecer.
-    if not _gravar_script_protegido(ps_file, "\r\n".join(linhas) + "\r\n"):
-        _etapa_fim("usuarios", False, 72)
-        return False
-
-    _log("\n  👥  Criando/atualizando usuários locais...", "info")
-    try:
-        if not _run_cmd(
-            f'powershell -NoProfile -ExecutionPolicy Bypass -File "{ps_file}"',
-            label="Criar/atualizar usuários", timeout=180,
-        ):
-            etapa_ok = False
-    finally:
-        _apagar_script(ps_file)
-
-    _etapa_fim("usuarios", etapa_ok, 72)
-    return etapa_ok
-
-
-# Apps removidos na otimização para TODOS os usuários. Mantido enxuto a pedido:
-# somente a família Xbox. Padrões aceitam curinga (*).
-# Nada essencial é tocado (Loja, Calculadora, Fotos, Terminal, Paint, Notepad…).
-_BLOATWARE: List[str] = [
-    "Microsoft.Xbox*",             # Xbox (app, overlays, identity, TCUI, Game Bar…)
-    "Microsoft.GamingApp",         # App Xbox (novo)
-    "Microsoft.Windows.Copilot",   # Copilot
-    "Microsoft.Copilot",           # Copilot (app da Store)
-    "Microsoft.BingNews",          # Bing News / Notícias
-    "Clipchamp.Clipchamp",         # Editor de vídeo Clipchamp
-    "Microsoft.MicrosoftSolitaireCollection",  # Solitaire
-]
-
-
 def _remover_bloatware() -> None:
     """Remove apps inúteis pré-instalados para TODOS os usuários e os
     'deprovisiona' (para não voltarem em novos perfis/usuários). Best-effort:
@@ -1323,7 +1222,7 @@ def _remover_onedrive() -> None:
 
 
 def _etapa_otimizacao() -> bool:
-    _etapa_inicio("otimizacao", 82)
+    _etapa_inicio("otimizacao", 66)
     _log("\n  ⚡  OTIMIZAÇÃO E LIMPEZA DO WINDOWS...", "info")
 
     acoes_ok = 0
@@ -1542,14 +1441,16 @@ def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
     if not _etapa_smb():
         erros.append("smb")
 
-    if not _etapa_usuarios():
-        erros.append("usuarios")
+    # Não há etapa de usuários: o setup não cria mais contas locais sozinho.
+    # Criar "Suporte" e "Administrador" em toda máquina espalhava credencial
+    # conhecida por todo o parque. Quem precisa de conta cria na aba Usuários,
+    # caso a caso.
 
     if otimizacao:
         _etapa_otimizacao()
     else:
         _log("\n  [INFO] Pulando etapa de otimização.", "info")
-        _etapa_inicio("otimizacao", 82)
+        _etapa_inicio("otimizacao", 66)
         _etapa_fim("otimizacao", True, 90)
 
     if verificar_integridade:
