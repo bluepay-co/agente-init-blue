@@ -82,10 +82,13 @@ def main() -> int:
            status("/api/version", cabecalhos={"X-Agente-Token": "errado"}), 403)
     checar("GET  token na query (modo SSE)",
            status("/api/version", query_token=token), 200)
-    for caminho in ("/api/usuarios/listar", "/api/programas/listar"):
+    for caminho in ("/api/usuarios/listar", "/api/programas/listar",
+                    "/api/monitoramento/status"):
         checar(f"GET  {caminho} sem token", status(caminho), 403)
     for caminho in ("/api/execute", "/api/usuarios/criar", "/api/usuarios/editar",
-                    "/api/usuarios/excluir", "/api/programas/desinstalar"):
+                    "/api/usuarios/excluir", "/api/programas/desinstalar",
+                    "/api/monitoramento/buscar", "/api/monitoramento/cadastrar",
+                    "/api/monitoramento/instalar"):
         checar(f"POST {caminho} sem token", status(caminho, "POST"), 403)
 
     print("\n[4] Origem e Host precisam ser da própria janela")

@@ -49,6 +49,7 @@ from typing import Optional, List
 
 import usuarios  # módulo local: painel Gerenciar Usuários
 import programas  # módulo local: desinstalador em lote
+import monitoramento  # módulo local: cadastro e agente do BlueControl IT
 from version import __version__
 
 # ─────────────────────────────────────────────
@@ -306,6 +307,8 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response(usuarios.listar())
         elif self._rota() == "/api/programas/listar":
             self._json_response(programas.listar())
+        elif self._rota() == "/api/monitoramento/status":
+            self._json_response(monitoramento.status())
         else:
             super().do_GET()
 
@@ -359,6 +362,30 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             ids = p.get("ids", [])
             threading.Thread(
                 target=programas.desinstalar_lote, args=(ids,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+
+        # ── Monitoramento ────────────────────────────────────────────────────
+        # buscar/cadastrar são proxy para a API do BlueControl: devolvem o
+        # status de lá junto com o corpo, para a interface mostrar o erro do
+        # servidor como ele veio. Status 0 = nem chegou a haver resposta HTTP.
+        elif self._rota() == "/api/monitoramento/buscar":
+            p = self._read_json_body()
+            status, data = monitoramento.buscar(
+                p.get("url_api", ""), p.get("token_agente", ""), p.get("q", ""))
+            self._json_response(data, status or 502)
+
+        elif self._rota() == "/api/monitoramento/cadastrar":
+            p = self._read_json_body()
+            url_api = p.pop("url_api", "")
+            token   = p.pop("token_agente", "")
+            status, data = monitoramento.cadastrar(url_api, token, p)
+            self._json_response(data, status or 502)
+
+        elif self._rota() == "/api/monitoramento/instalar":
+            p = self._read_json_body()
+            threading.Thread(
+                target=monitoramento.instalar, args=(p,), daemon=True,
             ).start()
             self._json_response({"ok": True})
 
@@ -441,6 +468,13 @@ def _log(msg: str, tipo: str = "muted"):
     msg = _mascarar(msg)
     _broadcast({"type": "log", "msg": msg, "tipo": tipo})
     log.info(msg)
+
+
+def _registrar(msg: str) -> None:
+    """Grava no log em disco sem publicar na interface. Para quem publica os
+    próprios eventos, no canal da sua aba (ver monitoramento.py): o log de
+    disco continua centralizado aqui, com o mesmo mascaramento."""
+    log.info(_mascarar(msg))
 
 
 def _etapa_inicio(etapa: str, pct: int):
@@ -1586,6 +1620,7 @@ def main() -> None:
     usuarios.init(_log, _logged_user, _NO_WINDOW,
                   _gravar_script_protegido, _apagar_script)
     programas.init(_log, _broadcast, _logged_user, _NO_WINDOW)
+    monitoramento.init(_broadcast, _registrar, _resolver, _NO_WINDOW)
 
     port   = _find_free_port()
     server = _ThreadedServer(("127.0.0.1", port), AgenteHandler)
