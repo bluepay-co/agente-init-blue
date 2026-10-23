@@ -12,6 +12,7 @@ em qualquer sistema, inclusive Linux:
     python tests/smoke.py
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -41,6 +42,8 @@ def main() -> int:
     agente.usuarios.init(agente._log, agente._logged_user, agente._NO_WINDOW,
                          agente._gravar_script_protegido, agente._apagar_script)
     agente.programas.init(agente._log, agente._broadcast, agente._logged_user, agente._NO_WINDOW)
+    agente.monitoramento.init(agente._broadcast, agente._registrar,
+                              agente._resolver, agente._NO_WINDOW)
 
     porta = agente._find_free_port()
     servidor = agente._ThreadedServer(("127.0.0.1", porta), agente.AgenteHandler)
@@ -67,7 +70,8 @@ def main() -> int:
 
     print("\n[1] Interface e assets")
     for caminho in ("/index.html", "/style.css", "/api.js", "/script.js",
-                    "/usuarios.js", "/programas.js", "/assets/bluepay-ico.ico"):
+                    "/usuarios.js", "/programas.js", "/monitoramento.js",
+                    "/assets/bluepay-ico.ico"):
         checar(caminho, status(caminho), 200)
 
     print("\n[2] Arquivos sensíveis não podem vazar por HTTP")
@@ -104,6 +108,28 @@ def main() -> int:
     threading.Timer(0.3, lambda: agente._broadcast({"tipo": "log", "msg": "ping"})).start()
     linha = resposta.readline().decode("utf-8")
     checar("evento entregue ao cliente", '"msg": "ping"' in linha, True)
+    resposta.close()
+
+    print("\n[6] Aba Monitoramento")
+    # A interface preenche URL/token a partir daqui, inclusive em máquina nova
+    # (existe=False) — se o /status parar de responder os campos, o cadastro
+    # volta a falhar como já falhou uma vez.
+    corpo = json.loads(urllib.request.urlopen(
+        urllib.request.Request(f"{base}/api/monitoramento/status",
+                               headers=autenticado), timeout=5).read())
+    for campo in ("existe", "url_api", "token_agente", "intervalo_segundos",
+                  "servico", "agentes_disponiveis"):
+        checar(f"/status devolve '{campo}'", campo in corpo, True)
+    checar("/status traz a URL padrão sem config", bool(corpo["url_api"]), True)
+    # Sem token padrão no código: em máquina nova o técnico digita o dele.
+    checar("/status NÃO inventa um token", corpo["token_agente"], "")
+
+    # O canal mon_* é separado do da aba Setup: o handleEvent do script.js
+    # ignora tipo desconhecido, e o da aba Monitoramento ignora 'log'/'etapa_*'.
+    resposta = urllib.request.urlopen(f"{base}/api/stream?t={token}", timeout=10)
+    threading.Timer(0.3, lambda: agente.monitoramento._progresso(42, "meio")).start()
+    linha = resposta.readline().decode("utf-8")
+    checar("progresso sai no canal mon_*", '"mon_progresso"' in linha, True)
     resposta.close()
 
     servidor.shutdown()

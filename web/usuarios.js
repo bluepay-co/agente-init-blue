@@ -5,10 +5,12 @@
 //  JavaScript puro, sem dependências.
 // ============================================
 
-// ── Navegação entre as views (Setup / Usuários / Programas) ──────────────────
+// ── Navegação entre as views (Setup / Usuários / Programas / Monitoramento) ──
 function showView(view) {
-  const views = { main: 'viewMain', users: 'viewUsers', programs: 'viewPrograms' };
-  const tabs  = { main: 'tab-setup', users: 'tab-users', programs: 'tab-programs' };
+  const views = { main: 'viewMain', users: 'viewUsers',
+                  programs: 'viewPrograms', monitor: 'viewMonitor' };
+  const tabs  = { main: 'tab-setup', users: 'tab-users',
+                  programs: 'tab-programs', monitor: 'tab-monitor' };
 
   Object.keys(views).forEach(k => {
     const el = document.getElementById(views[k]);
@@ -19,6 +21,7 @@ function showView(view) {
 
   if (view === 'users') carregarUsuarios();
   if (view === 'programs' && typeof carregarProgramas === 'function') carregarProgramas();
+  if (view === 'monitor' && typeof monCarregarStatus === 'function') monCarregarStatus();
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

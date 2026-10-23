@@ -26,11 +26,12 @@
         <p class="app-version" id="appVersion">BlueControl IT</p>
       </div>
 
-      <!-- Navegação entre Setup e Gerenciar Usuários -->
+      <!-- Navegação entre as abas -->
       <div class="nav-tabs">
         <button class="nav-tab active" id="tab-setup" onclick="showView('main')">Setup</button>
         <button class="nav-tab" id="tab-users" onclick="showView('users')">Usuários</button>
         <button class="nav-tab" id="tab-programs" onclick="showView('programs')">Programas</button>
+        <button class="nav-tab" id="tab-monitor" onclick="showView('monitor')">Monitoramento</button>
       </div>
 
       <!-- ══════════ VIEW: SETUP ══════════ -->
@@ -318,6 +319,131 @@
 
       </div><!-- /viewPrograms -->
 
+      <!-- ══════════ VIEW: MONITORAMENTO (BlueControl IT) ══════════ -->
+      <!-- Veio do ConfiguradorAgente.exe, que era um programa separado. Os ids
+           levam o prefixo "mon" porque progressBar/progressLabel já são da aba
+           Setup, e as duas views coexistem no mesmo documento. -->
+      <div id="viewMonitor" style="display:none;">
+
+        <!-- Situação atual (só aparece se a máquina já tiver config.json) -->
+        <div class="card" id="monStatusCard" style="display:none">
+          <p class="card-label">Situação Atual</p>
+          <div class="status-row">
+            <span class="status-dot" id="monStatusDot"></span>
+            <span class="status-text">
+              <strong id="monStatusPatrimonio">—</strong>
+              <small id="monStatusDetalhe">—</small>
+            </span>
+          </div>
+        </div>
+
+        <!-- Escolha da máquina -->
+        <div class="card">
+          <p class="card-label">Máquina</p>
+
+          <div class="tabs">
+            <button class="tab-btn active" id="monTabBtnBuscar" onclick="monMudarTab('buscar')">Já cadastrada</button>
+            <button class="tab-btn" id="monTabBtnCadastrar" onclick="monMudarTab('cadastrar')">Cadastrar nova</button>
+          </div>
+
+          <!-- Buscar existente -->
+          <div class="tab-panel active" id="monTabBuscar">
+            <div class="field">
+              <label>Buscar por nome, patrimônio ou nº de série</label>
+              <input type="text" id="monInpBusca" placeholder="Ex: Notebook Ana, 0033..." oninput="monOnBuscaInput()">
+            </div>
+            <div class="resultados" id="monResultados"></div>
+            <div class="selecionado-banner" id="monSelecionadoBanner">
+              <span>✔</span>
+              <span>Selecionado: <strong id="monSelecionadoNome">—</strong></span>
+            </div>
+          </div>
+
+          <!-- Cadastrar nova -->
+          <div class="tab-panel" id="monTabCadastrar">
+            <div class="field">
+              <label>Nome da máquina *</label>
+              <input type="text" id="monCadNome" placeholder="Ex: Notebook Recepção">
+            </div>
+            <div class="field">
+              <label>Responsável</label>
+              <input type="text" id="monCadResponsavel" placeholder="Nome do colaborador">
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label>Locadora</label>
+                <input type="text" id="monCadLocadora" placeholder="Ex: Allugg">
+              </div>
+              <div class="field">
+                <label>Categoria</label>
+                <select id="monCadCategoria">
+                  <option value="Notebooks">Notebook</option>
+                  <option value="Desktop">Desktop</option>
+                  <option value="Servidor">Servidor</option>
+                </select>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label>Setor</label>
+                <input type="text" id="monCadSetor" placeholder="Ex: TI">
+              </div>
+              <div class="field">
+                <label>Nº de série</label>
+                <input type="text" id="monCadSerie" placeholder="Opcional">
+              </div>
+            </div>
+            <p class="hint">O número de patrimônio é gerado automaticamente ao instalar.</p>
+          </div>
+        </div>
+
+        <!-- Servidor (avançado) -->
+        <div class="card">
+          <p class="card-label">
+            Servidor
+            <span class="card-label-acao" onclick="monToggleAvancado()" id="monAvancadoToggle">mostrar</span>
+          </p>
+          <div id="monAvancadoFields" style="display:none;flex-direction:column;gap:10px">
+            <div class="field">
+              <label>URL da API</label>
+              <!-- Quem manda é DEFAULT_URL_API em src/monitoramento.py: o
+                   /api/monitoramento/status sobrescreve este campo ao abrir a
+                   aba, inclusive em máquina nova. -->
+              <input type="text" id="monCfgUrlApi" value="http://192.168.10.11:8550">
+            </div>
+            <div class="field">
+              <label>Token do agente</label>
+              <input type="text" id="monCfgToken" value="" placeholder="token fornecido pelo administrador">
+            </div>
+            <div class="field">
+              <label>Intervalo de coleta</label>
+              <select id="monCfgIntervalo">
+                <option value="60">1 minuto</option>
+                <option value="300" selected>5 minutos (recomendado)</option>
+                <option value="600">10 minutos</option>
+                <option value="900">15 minutos</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Log da instalação -->
+        <div class="log-box" id="monLogBox"></div>
+
+        <!-- Progresso -->
+        <div class="progress-section" id="monProgressSection">
+          <div class="progress-bar-wrap">
+            <div class="progress-bar" id="monProgressBar"></div>
+          </div>
+          <p class="progress-label" id="monProgressLabel">Aguardando…</p>
+        </div>
+
+        <button class="btn-executar" id="monBtnInstalar" onclick="monInstalar()">
+          SALVAR E INSTALAR
+        </button>
+
+      </div><!-- /viewMonitor -->
+
     </div>
   </div>
 
@@ -326,6 +452,7 @@
   <script src="script.js"></script>
   <script src="usuarios.js"></script>
   <script src="programas.js"></script>
+  <script src="monitoramento.js"></script>
 </body>
 
 </html>
