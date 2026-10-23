@@ -3,6 +3,39 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 Este projeto segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [3.1.0] — 2026-10-23
+
+### Adicionado
+- Aba **Monitoramento**: cadastra a máquina no BlueControl IT (busca uma já
+  cadastrada ou cadastra uma nova) e instala o agente de métricas como serviço,
+  o acesso remoto como tarefa no logon, e habilita o WinRM e o ping no
+  firewall. Era o `ConfiguradorAgente.exe`, um programa separado.
+- `src/monitoramento.py` e rotas `GET /api/monitoramento/status`,
+  `POST /api/monitoramento/{buscar,cadastrar,instalar}`.
+- `AGENTEBLUE_EMBED_AGENTS=1` embute os agentes de monitoramento no executável;
+  por padrão eles vão soltos numa pasta `agents\` ao lado dele.
+- Cobertura no `smoke.py` para as rotas novas, o formato do `/status` e o canal
+  de eventos `mon_*`.
+
+### Modificado
+- **Um executável só.** O `ConfiguradorAgente.exe` repetia a infraestrutura
+  inteira do agente — servidor HTTP, fila SSE, elevação a Administrador, busca
+  de porta livre e abertura da janela. Ao virar aba, sobrou apenas a lógica de
+  domínio. No CSS, 14 dos 33 seletores dele foram descartados por serem cópias
+  dos que já existiam (`.card` era igual byte a byte).
+- Eventos SSE da aba Monitoramento saem em `mon_log`/`mon_progresso`, canal
+  próprio, para não se misturarem com o log da aba Setup.
+
+### Segurança
+- As rotas de monitoramento passaram a exigir o token de sessão e as
+  verificações de `Origin`/`Host`. No programa separado elas eram **abertas**:
+  qualquer página no navegador da máquina podia chamar a instalação, que
+  registra serviço como `LocalSystem`.
+
+### Corrigido
+- O cadastro aceita `patrimonio` e `patrimonio_interno` na resposta do
+  servidor, em vez de depender de um dos dois nomes.
+
 ## [3.0.0] — 2026-10-15
 
 ### Adicionado

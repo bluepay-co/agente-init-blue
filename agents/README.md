@@ -1,13 +1,30 @@
 # Agentes BlueControl
 
-Agentes instalados nas máquinas dos clientes. Conversam com a API do painel
-(`src/agente.py`) usando um token de agente no header `X-Agent-Token`.
+Agentes instalados nas máquinas dos clientes. Conversam com o backend do
+BlueControl IT (`http://192.168.10.11:8550`, projeto separado — não é o
+`src/agente.py` deste repositório) usando um token de agente no header
+`X-Agent-Token`.
 
 | Pasta | Conteúdo |
 |---|---|
-| `windows/` | Agente remoto, agente de métricas e o configurador |
+| `windows/` | Agente remoto e agente de métricas |
 | `windows/agente_leve/` | Agente enxuto, só métricas essenciais |
+| `windows/configurador/` | **Substituído** pela aba Monitoramento do agente |
 | `macos/` | Equivalentes para macOS, com LaunchDaemons em `macos/launchd/` |
+
+## Quem instala os agentes
+
+A **aba Monitoramento** do `AgenteBlue.exe` (ver `src/monitoramento.py`). Ela
+cadastra a máquina, grava `C:\BlueControl\config.json`, registra o serviço de
+métricas e a tarefa do acesso remoto, e habilita o WinRM.
+
+Os `.exe` compilados em `windows/dist/` são o que ela instala — o
+`build/compilar.ps1` da raiz os copia para uma pasta `agents\` ao lado do
+`AgenteBlue.exe`.
+
+O `windows/configurador/` fazia esse papel como programa separado. Está
+mantido por enquanto como plano B, até a aba ser validada em máquina real; o
+código novo é o `src/monitoramento.py`, e é lá que as correções entram.
 
 ## Segredos
 

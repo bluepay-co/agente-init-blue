@@ -25,10 +25,13 @@ Ao clicar em **Executar**, na ordem:
 7. **Integridade** — `sfc /scannow` (rápido) ou `DISM /RestoreHealth` + SFC
    (completo).
 
-Além do setup, a interface tem dois painéis:
+Além do setup, a interface tem três painéis:
 
 - **Usuários** — criar, editar, renomear e excluir contas locais.
 - **Programas** — desinstalar programas em lote, com limpeza de sobras.
+- **Monitoramento** — cadastra a máquina no BlueControl IT e instala o agente
+  de métricas, o acesso remoto e o WinRM. Era o `ConfiguradorAgente.exe`, um
+  programa separado; virou aba na v3.1.
 
 ## 🔒 Segurança da interface
 
@@ -52,10 +55,12 @@ agente-blue/
 │   ├── agente.py         entrypoint: servidor HTTP, SSE e etapas do setup
 │   ├── usuarios.py       painel Gerenciar Usuários
 │   ├── programas.py      painel Desinstalar Programas
+│   ├── monitoramento.py  painel Monitoramento (BlueControl IT)
 │   └── version.py        fonte única da versão
 ├── web/                  interface (HTML, CSS, JS; api.js fala com o backend)
 ├── assets/               ícone e papel de parede
 ├── installers/           instaladores usados na etapa de softwares
+├── agents/               agentes de monitoramento (Windows e macOS)
 ├── build/                AgenteBlue.spec + compilar.ps1
 ├── tests/                smoke test do servidor local
 ├── config.example.json   modelo de configuração
@@ -64,6 +69,28 @@ agente-blue/
 
 A mesma estrutura se repete ao lado do `AgenteBlue.exe` compilado, então editar
 `web/` ou trocar um instalador não exige recompilar (no modo onedir).
+
+Os módulos dos painéis **não importam o `agente.py`**: recebem os helpers
+compartilhados (log, broadcast, resolução de caminhos) por um `init()`. A
+dependência aponta numa direção só, e cada painel é testável isolado.
+
+### Agentes de monitoramento
+
+A aba Monitoramento instala dois executáveis em `C:\BlueControl`:
+`BlueControl_Metricas.exe` (serviço Windows) e `BlueControl_Remote.exe` (tarefa
+no logon). Somam ~68 MB e têm ciclo de vida próprio, então **ficam fora do
+`AgenteBlue.exe`**: o `compilar.ps1` deixa os dois numa pasta `agents\` ao lado
+do executável, que é onde o `_resolver()` procura primeiro.
+
+Para uma entrega monolítica (um `.exe` só, sem pasta ao lado):
+
+```powershell
+$env:AGENTEBLUE_EMBED_AGENTS = '1'
+.\build\compilar.ps1 -Onefile
+```
+
+Os agentes são compilados nos seus próprios scripts, em `agents/windows/` — ver
+[`agents/README.md`](agents/README.md).
 
 ## ⚙️ Configuração (`config.json`)
 
