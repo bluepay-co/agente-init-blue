@@ -48,6 +48,10 @@ build_log.txt
 *.toc
 base_library.zip
 xref-*.html
+# Relatorio de avisos do PyInstaller. Entra por extensao, como os de cima,
+# porque "build/*/" tem barra e por isso vale so para o build/ da raiz -- nao
+# alcanca agents/windows/build/, onde os agentes sao compilados.
+warn-*.txt
 
 # PyInstaller: versionamos apenas os .spec, que sao fonte
 !*.spec
