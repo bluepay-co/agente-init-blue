@@ -72,10 +72,34 @@ function Copy-Assets {
     Write-Host "  [OK] Assets atualizados em $OutDir" -ForegroundColor Green
 }
 
+# Agentes de monitoramento (aba Monitoramento). Vao SOLTOS numa pasta agents\
+# ao lado do exe, que e onde o _resolver() procura primeiro -- assim trocar o
+# agente nao exige recompilar o inicializador. Com AGENTEBLUE_EMBED_AGENTS=1
+# eles entram dentro do exe e esta copia e dispensavel.
+function Copy-Agents([string]$Destino) {
+    $src = Join-Path $Root 'agents\windows\dist'
+    $exes = @(if (Test-Path $src) { Get-ChildItem -Path $src -Filter '*.exe' -File })
+    if (-not $exes) {
+        Write-Host "  [AVISO] Nenhum agente em agents\windows\dist\ -- a aba" -ForegroundColor Yellow
+        Write-Host "          Monitoramento vai avisar que faltam os .exe." -ForegroundColor Yellow
+        return
+    }
+    if ($env:AGENTEBLUE_EMBED_AGENTS -eq '1') {
+        Write-Host "  [OK] $($exes.Count) agente(s) embutido(s) no exe." -ForegroundColor Green
+        return
+    }
+    $dst = Join-Path $Destino 'agents'
+    if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst | Out-Null }
+    foreach ($e in $exes) { Copy-Item $e.FullName -Destination $dst -Force }
+    $mb = [math]::Round((($exes | Measure-Object Length -Sum).Sum) / 1MB, 1)
+    Write-Host "  [OK] $($exes.Count) agente(s) em $dst ($mb MB)" -ForegroundColor Green
+}
+
 # ── Modo rápido: só atualiza os arquivos, sem recompilar ────────────────
 if ($AssetsOnly) {
     Write-Host " Modo -AssetsOnly: atualizando arquivos sem recompilar..." -ForegroundColor Cyan
     Copy-Assets
+    Copy-Agents $OutDir
     Write-Host ""
     Write-Host " Pronto. Execute: $ExePath" -ForegroundColor Green
     exit 0
@@ -112,6 +136,8 @@ if ($Onefile) {
         Write-Host " [ERRO] Nao foi possivel substituir $OnefileExe (feche o Agente Blue)." -ForegroundColor Red
         exit 1
     }
+    Write-Step '4/4' 'Copiando os agentes de monitoramento...'
+    Copy-Agents $DistDir
     $resultExe = $OnefileExe
 } else {
     # ── ONEDIR: publica a pasta unica dist\AgenteBlue\ ───────────────────
@@ -133,6 +159,7 @@ if ($Onefile) {
     Move-Item -Path $built -Destination $OutDir -Force
     Write-Step '4/4' 'Copiando assets externos...'
     Copy-Assets
+    Copy-Agents $OutDir
     $resultExe = $ExePath
 }
 
@@ -152,6 +179,10 @@ Write-Host ""
 if ($Onefile) {
     Write-Host " Entrega: copie este .exe + o config.json preenchido para a mesma pasta." -ForegroundColor DarkGray
     Write-Host "   (web, assets e installers ja vao embutidos; config.json fica de fora por conter senhas.)" -ForegroundColor DarkGray
+    if ($env:AGENTEBLUE_EMBED_AGENTS -ne '1') {
+        Write-Host "   Leve tambem a pasta dist\agents\ ao lado do exe -- e de onde a aba" -ForegroundColor DarkGray
+        Write-Host "   Monitoramento instala o agente de metricas e o acesso remoto." -ForegroundColor DarkGray
+    }
 } else {
     Write-Host " Dica: alterou so a interface (html/js/css)? Use:" -ForegroundColor DarkGray
     Write-Host "   .\build\compilar.ps1 -AssetsOnly   (atualiza sem recompilar)" -ForegroundColor DarkGray

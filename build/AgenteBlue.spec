@@ -40,6 +40,27 @@ for _f in glob.glob(os.path.join(ROOT, 'assets', '*')):
 for _f in glob.glob(os.path.join(ROOT, 'installers', '*.exe')):
     datas.append((_f, 'installers'))
 
+# Agentes de monitoramento (aba Monitoramento). Ficam FORA do exe por padrao:
+# sao ~68 MB (o BlueControl_Remote carrega av/numpy pro streaming de tela) e
+# mudam num ritmo proprio, independente do inicializador -- trocar o agente
+# nao deveria exigir recompilar isto. O tecnico leva a pasta agents\ ao lado
+# do AgenteBlue.exe, que e onde o _resolver() procura primeiro.
+# Para embutir mesmo assim (entrega monolitica em pendrive), defina
+# AGENTEBLUE_EMBED_AGENTS=1.
+EMBED_AGENTS = os.environ.get('AGENTEBLUE_EMBED_AGENTS') == '1'
+_agentes = glob.glob(os.path.join(ROOT, 'agents', 'windows', 'dist', '*.exe'))
+if EMBED_AGENTS:
+    if _agentes:
+        for _f in _agentes:
+            datas.append((_f, 'agents'))
+        print(f'[spec] {len(_agentes)} agente(s) de monitoramento EMBUTIDO(S).')
+    else:
+        print('[spec] AVISO: AGENTEBLUE_EMBED_AGENTS=1 mas agents\\windows\\dist\\ '
+              'esta vazio -- compile os agentes primeiro.')
+elif _agentes:
+    print(f'[spec] {len(_agentes)} agente(s) em agents\\windows\\dist\\ NAO embutidos '
+          '(leve a pasta agents\\ ao lado do exe, ou use AGENTEBLUE_EMBED_AGENTS=1).')
+
 if EMBED_CONFIG:
     _cfg = os.path.join(ROOT, 'config.json')
     if os.path.exists(_cfg):
