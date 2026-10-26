@@ -395,8 +395,32 @@ def main() -> int:
     checar("nao sobrescreve perfil existente", _r3, _outro)
     checar("perfil existente segue intacto", _novo.exists(), True)
 
+    # Conexao automatica: e config-auto que o OpenVPNService sobe no boot,
+    # como SYSTEM e sem ninguem logado. Em config o perfil so conecta quando
+    # alguem abre o GUI e clica -- o trabalho manual que a aba existe para
+    # tirar. Mover tem que levar os companheiros: um perfil sem o CA ao lado
+    # nao sobe, e o servico nao tem onde reclamar.
+    _ad = _Path(_tf.mkdtemp())
+    _ap = _ad / "p.ovpn"
+    _ap.write_text('client\nca c.crt\ntls-auth t.key 1\nauth-user-pass "/x/a.txt"\n',
+                   encoding="utf-8")
+    (_ad / "c.crt").write_text("ca", encoding="utf-8")
+    (_ad / "t.key").write_text("key", encoding="utf-8")
+    checar("le as referencias do perfil",
+           sorted(agente.vpn.refs_arquivo(_ap)), ["c.crt", "t.key"])
+    # auth-user-pass NAO e arquivo de chave: entrar nessa lista faria o perfil
+    # ser copiado com a credencial e, pior, acusar falta dela.
+    checar("credencial nao entra nas referencias",
+           "/x/a.txt" in agente.vpn.refs_arquivo(_ap), False)
+    checar("perfil completo nao acusa falta (apos refatorar)",
+           agente.vpn.arquivos_faltando(_ap), [])
+    (_ad / "c.crt").unlink()
+    checar("CA removido volta a ser acusado",
+           agente.vpn.arquivos_faltando(_ap), ["c.crt"])
+
     _st = agente.vpn.status()
-    for campo in ("instalado", "perfis", "com_credencial", "instalador", "servico"):
+    for campo in ("instalado", "perfis", "com_credencial", "instalador",
+                  "servico", "autoconexao"):
         checar(f"/status da VPN devolve '{campo}'", campo in _st, True)
 
     print("\n[7c] Exclusão exige patrimônio e número de série")

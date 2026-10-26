@@ -114,28 +114,95 @@ _DIRETIVAS_COM_ARQUIVO = ("ca", "cert", "key", "tls-auth", "tls-crypt",
                           "tls-crypt-v2", "dh", "crl-verify", "pkcs12")
 
 
-def arquivos_faltando(perfil: Path) -> List[str]:
-    """Arquivos que o .ovpn referencia e que nao estao ao lado dele."""
+def refs_arquivo(perfil: Path) -> List[str]:
+    """Os arquivos que o .ovpn referencia, como escritos nele."""
     try:
         texto = perfil.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return []
-    faltando = []
+    refs = []
     for linha in texto.splitlines():
-        limpa = linha.strip()
-        partes = limpa.split()
+        partes = linha.strip().split()
         if not partes or partes[0] not in _DIRETIVAS_COM_ARQUIVO or len(partes) < 2:
             continue
         ref = partes[1].strip('"')
         # Chave inline (<ca>...</ca>) nao referencia arquivo nenhum.
         if ref.startswith("["):
             continue
+        refs.append(ref)
+    return refs
+
+
+def arquivos_faltando(perfil: Path) -> List[str]:
+    """Arquivos que o .ovpn referencia e que nao estao ao lado dele."""
+    faltando = []
+    for ref in refs_arquivo(perfil):
         alvo = Path(ref)
         if not alvo.is_absolute():
             alvo = perfil.parent / ref
         if not alvo.exists():
             faltando.append(ref)
     return faltando
+
+
+def mover_para_autostart(perfil: Path) -> Tuple[Path, str]:
+    """Move o perfil (e os arquivos que ele referencia) para config-auto.
+
+    E config-auto que o OpenVPNService sobe no boot, como SYSTEM e sem
+    ninguem logado. Em config, o perfil so conecta quando alguem abre o GUI e
+    clica -- que e justamente o trabalho manual que esta aba existe para tirar.
+
+    MOVE em vez de copiar: o mesmo perfil nas duas pastas aparece duas vezes
+    no GUI e convida a uma segunda conexao em paralelo com a do servico.
+    """
+    d = _dir_openvpn()
+    if not d:
+        return perfil, "pasta do OpenVPN não encontrada"
+    destino = d / "config-auto"
+    if perfil.parent == destino:
+        return perfil, ""
+    try:
+        destino.mkdir(parents=True, exist_ok=True)
+        # Os companheiros primeiro: um perfil em config-auto sem o CA ao lado
+        # nao sobe, e o servico nao tem onde reclamar.
+        for ref in refs_arquivo(perfil):
+            origem = Path(ref)
+            if origem.is_absolute():
+                continue
+            origem = perfil.parent / ref
+            if origem.exists() and not (destino / ref).exists():
+                shutil.copy2(str(origem), str(destino / ref))
+        alvo = destino / perfil.name
+        shutil.move(str(perfil), str(alvo))
+        return alvo, ""
+    except Exception as e:
+        return perfil, f"não consegui mover o perfil para config-auto: {e}"
+
+
+def ativar_servico() -> Tuple[bool, str]:
+    """Deixa o OpenVPNService subindo no boot e o inicia agora.
+
+    O instalador deixa este servico em DEMAND_START: sem isto o perfil fica em
+    config-auto e nada o sobe, que e o mesmo resultado de nao ter mexido.
+    """
+    try:
+        subprocess.run(["sc", "config", "OpenVPNService", "start=", "auto"],
+                       capture_output=True, text=True, errors="ignore",
+                       timeout=30, creationflags=_NO_WINDOW)
+        # Reinicia: se ja estava rodando, ele so le config-auto na partida.
+        subprocess.run(["sc", "stop", "OpenVPNService"],
+                       capture_output=True, text=True, errors="ignore",
+                       timeout=60, creationflags=_NO_WINDOW)
+        r = subprocess.run(["sc", "start", "OpenVPNService"],
+                           capture_output=True, text=True, errors="ignore",
+                           timeout=60, creationflags=_NO_WINDOW)
+        saida = (r.stdout or "") + (r.stderr or "")
+        # 1056 = ja esta rodando; e sucesso para o que queremos.
+        if r.returncode == 0 or "1056" in saida:
+            return True, ""
+        return False, saida.strip()[:200] or f"sc start devolveu {r.returncode}"
+    except Exception as e:
+        return False, str(e)
 
 
 def escolher_perfil(perfis: List[Path]) -> Optional[Path]:
@@ -215,6 +282,10 @@ def status() -> dict:
         "com_credencial": com_credencial,
         "instalador":     instalador.name if instalador else "",
         "servico":        _estado_servico(),
+        # Conexao automatica = perfil em config-auto E servico ativo.
+        # Uma coisa sem a outra da o mesmo resultado de nada feito.
+        "autoconexao":    any(p.parent.name == "config-auto"
+                              for p in perfis),
     }
 
 
@@ -550,6 +621,23 @@ def _salvar_log(linhas: List[str]) -> str:
         return ""
 
 
+def _ativar_conexao_automatica(perfis: List[Path]) -> None:
+    """Sobe o OpenVPNService, para o tunel subir sozinho no boot."""
+    em_auto = [p for p in perfis if p.parent.name == "config-auto"]
+    if not em_auto:
+        _log("O perfil não está em config-auto — a conexão vai continuar "
+             "manual, pelo OpenVPN GUI.", "warn")
+        return
+    ok, erro = ativar_servico()
+    if ok:
+        _log("OpenVPNService ativo e em inicialização automática: a VPN "
+             "conecta sozinha no boot, sem ninguém logar nem clicar.", "ok")
+    else:
+        _log(f"Não consegui ativar o OpenVPNService: {erro}", "warn")
+        _log("O perfil já está em config-auto — ative o serviço à mão com "
+             "\"sc config OpenVPNService start= auto\" e reinicie.", "info")
+
+
 # ── Instalação ────────────────────────────────────────────────────────────
 
 def instalar(params: dict) -> None:
@@ -634,6 +722,20 @@ def instalar(params: dict) -> None:
                  "aparece no OpenVPN GUI.", "ok")
         perfis = renomeados
 
+        # Para config-auto ANTES de gravar a credencial: o caminho absoluto da
+        # credencial vai escrito dentro do perfil, e mover depois deixaria a
+        # diretiva apontando para a pasta antiga.
+        _progresso(70, "Ativando a conexão automática…")
+        movidos = []
+        for perfil in perfis:
+            novo_perfil, aviso = mover_para_autostart(perfil)
+            if aviso:
+                _log(aviso, "warn")
+                _log("A VPN vai funcionar, mas só quando alguém conectar pelo "
+                     "OpenVPN GUI.", "warn")
+            movidos.append(novo_perfil)
+        perfis = movidos
+
         _progresso(80, "Gravando a credencial…")
         falhas = 0
         for perfil in perfis:
@@ -692,7 +794,10 @@ def instalar(params: dict) -> None:
         if situacao == "ok":
             _log(f"Credencial de {usuario} aceita — o túnel subiu e foi "
                  "encerrado.", "ok")
-            _progresso(100, "VPN pronta e credencial confirmada!", ok=True)
+            # Só agora: subir o serviço com uma credencial recusada deixaria
+            # ele tentando e falhando em loop a cada boot.
+            _ativar_conexao_automatica(perfis)
+            _progresso(100, "VPN pronta, conectando automaticamente!", ok=True)
             return
 
         # Indeterminado: não dá para afirmar que a senha está errada, e mandar
@@ -723,6 +828,10 @@ def instalar(params: dict) -> None:
         destino_log = _salvar_log(uteis)
         if destino_log:
             _log(f"Log completo do teste salvo em {destino_log}", "info")
+        # Ativa mesmo assim: "indeterminado" nao e credencial recusada, e
+        # deixar a conexao manual por uma duvida de rede seria pior -- se a
+        # credencial estiver certa, o tunel sobe no proximo boot.
+        _ativar_conexao_automatica(perfis)
         _progresso(100, "VPN instalada — credencial não pôde ser testada",
                    ok=True)
 
