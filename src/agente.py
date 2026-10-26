@@ -50,6 +50,7 @@ from typing import Optional, List
 import usuarios  # módulo local: painel Gerenciar Usuários
 import programas  # módulo local: desinstalador em lote
 import monitoramento  # módulo local: cadastro e agente do BlueControl IT
+import vpn  # módulo local: instalação da VPN (OpenVPN)
 from version import __version__
 
 # ─────────────────────────────────────────────
@@ -308,6 +309,8 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response(programas.listar())
         elif self._rota() == "/api/monitoramento/status":
             self._json_response(monitoramento.status())
+        elif self._rota() == "/api/vpn/status":
+            self._json_response(vpn.status())
         else:
             super().do_GET()
 
@@ -398,6 +401,13 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
                 p.get("url_api", ""), p.get("token_agente", ""),
                 p.get("patrimonio", ""))
             self._json_response(data, status or 502)
+
+        elif self._rota() == "/api/vpn/instalar":
+            p = self._read_json_body()
+            threading.Thread(
+                target=vpn.instalar, args=(p,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
 
         elif self._rota() == "/api/monitoramento/limpar":
             p = self._read_json_body()
@@ -1536,6 +1546,7 @@ def main() -> None:
                   _gravar_script_protegido, _apagar_script)
     programas.init(_log, _broadcast, _logged_user, _NO_WINDOW)
     monitoramento.init(_broadcast, _registrar, _resolver, _NO_WINDOW)
+    vpn.init(_broadcast, _registrar, _resolver, _NO_WINDOW)
 
     port   = _find_free_port()
     server = _ThreadedServer(("127.0.0.1", port), AgenteHandler)

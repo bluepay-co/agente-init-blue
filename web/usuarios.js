@@ -8,9 +8,11 @@
 // ── Navegação entre as views (Setup / Usuários / Programas / Monitoramento) ──
 function showView(view) {
   const views = { main: 'viewMain', users: 'viewUsers',
-                  programs: 'viewPrograms', monitor: 'viewMonitor' };
+                  programs: 'viewPrograms', monitor: 'viewMonitor',
+                  vpn: 'viewVpn' };
   const tabs  = { main: 'tab-setup', users: 'tab-users',
-                  programs: 'tab-programs', monitor: 'tab-monitor' };
+                  programs: 'tab-programs', monitor: 'tab-monitor',
+                  vpn: 'tab-vpn' };
 
   Object.keys(views).forEach(k => {
     const el = document.getElementById(views[k]);
@@ -22,6 +24,7 @@ function showView(view) {
   if (view === 'users') { carregarUsuarios(); carregarHostname(); }
   if (view === 'programs' && typeof carregarProgramas === 'function') carregarProgramas();
   if (view === 'monitor' && typeof monCarregarStatus === 'function') monCarregarStatus();
+  if (view === 'vpn' && typeof vpnCarregarStatus === 'function') vpnCarregarStatus();
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

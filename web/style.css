@@ -529,7 +529,7 @@ input:checked + .slider:before {
    TODA view nova precisa entrar aqui: o showView() aplica display:flex, e sem
    o flex-direction:column os cards se alinham em LINHA e a aba vira um amasso
    horizontal. Foi o que aconteceu com a #viewMonitor quando ela foi criada. */
-#viewMain, #viewUsers, #viewPrograms, #viewMonitor {
+#viewMain, #viewUsers, #viewPrograms, #viewMonitor, #viewVpn {
   display: flex;
   flex-direction: column;
   gap: 10px;

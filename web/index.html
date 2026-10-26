@@ -32,6 +32,7 @@
         <button class="nav-tab" id="tab-users" onclick="showView('users')">Usuários</button>
         <button class="nav-tab" id="tab-programs" onclick="showView('programs')">Programas</button>
         <button class="nav-tab" id="tab-monitor" onclick="showView('monitor')">Monitoramento</button>
+        <button class="nav-tab" id="tab-vpn" onclick="showView('vpn')">VPN</button>
       </div>
 
       <!-- ══════════ VIEW: SETUP ══════════ -->
@@ -480,6 +481,50 @@
 
       </div><!-- /viewMonitor -->
 
+      <!-- ══ VPN ══════════════════════════════════════════════════ -->
+      <div id="viewVpn" style="display:none;">
+
+        <div class="card" id="vpnStatusCard">
+          <p class="card-label">Situação Atual</p>
+          <div class="status-row">
+            <span class="status-dot" id="vpnStatusDot"></span>
+            <span class="status-text">
+              <strong id="vpnStatusTitulo">Verificando…</strong>
+              <small id="vpnStatusDetalhe">—</small>
+            </span>
+          </div>
+        </div>
+
+        <div class="card">
+          <p class="card-label">Credencial do colaborador</p>
+          <div class="field">
+            <label>Usuário *</label>
+            <input type="text" id="vpnUsuario" placeholder="login da VPN deste colaborador"
+                   autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Senha *</label>
+            <input type="password" id="vpnSenha" placeholder="senha da VPN"
+                   autocomplete="new-password">
+          </div>
+          <p class="hint">Cada colaborador usa a credencial dele. Ela é gravada só nesta
+             máquina, num arquivo acessível apenas por SYSTEM e Administradores —
+             não vai para o BlueControl nem fica dentro do executável.</p>
+        </div>
+
+        <div class="progress-wrap">
+          <div class="progress-track">
+            <div class="progress-bar" id="vpnProgressBar"></div>
+          </div>
+          <p class="progress-label" id="vpnProgressLabel">Aguardando…</p>
+        </div>
+
+        <button class="btn-executar" id="vpnBtnInstalar" onclick="vpnInstalar()">
+          INSTALAR VPN
+        </button>
+
+      </div><!-- /viewVpn -->
+
     </div>
   </div>
 
@@ -489,6 +534,7 @@
   <script src="usuarios.js"></script>
   <script src="programas.js"></script>
   <script src="monitoramento.js"></script>
+  <script src="vpn.js"></script>
 </body>
 
 </html>

@@ -104,3 +104,13 @@ ehthumbs.db
 *~
 *.tmp
 *.bak
+
+# ─────────────────────────────────────────────
+#  INSTALADOR DA VPN (perfil do pfSense)
+# ─────────────────────────────────────────────
+# Os demais instaladores sao binarios publicos de fornecedor e podem ser
+# versionados. Este nao: e um export do OpenVPN Client Export do pfSense e
+# carrega o perfil da NOSSA rede -- CA, endereco/porta do tunel e a chave
+# tls-auth/tls-crypt, que e segredo compartilhado. No repositorio, isso vira
+# credencial publicada. Cada maquina recebe o arquivo pelo pendrive.
+installers/openvpn-*.exe

@@ -44,6 +44,8 @@ def main() -> int:
     agente.programas.init(agente._log, agente._broadcast, agente._logged_user, agente._NO_WINDOW)
     agente.monitoramento.init(agente._broadcast, agente._registrar,
                               agente._resolver, agente._NO_WINDOW)
+    agente.vpn.init(agente._broadcast, agente._registrar,
+                    agente._resolver, agente._NO_WINDOW)
 
     porta = agente._find_free_port()
     servidor = agente._ThreadedServer(("127.0.0.1", porta), agente.AgenteHandler)
@@ -71,7 +73,7 @@ def main() -> int:
     print("\n[1] Interface e assets")
     for caminho in ("/index.html", "/style.css", "/api.js", "/script.js",
                     "/usuarios.js", "/programas.js", "/monitoramento.js",
-                    "/assets/bluepay-ico.ico"):
+                    "/vpn.js", "/assets/bluepay-ico.ico"):
         checar(caminho, status(caminho), 200)
 
     print("\n[2] Arquivos sensíveis não podem vazar por HTTP")
@@ -87,14 +89,15 @@ def main() -> int:
     checar("GET  token na query (modo SSE)",
            status("/api/version", query_token=token), 200)
     for caminho in ("/api/usuarios/listar", "/api/programas/listar",
-                    "/api/usuarios/hostname", "/api/monitoramento/status"):
+                    "/api/usuarios/hostname", "/api/monitoramento/status",
+                    "/api/vpn/status"):
         checar(f"GET  {caminho} sem token", status(caminho), 403)
     for caminho in ("/api/execute", "/api/usuarios/criar", "/api/usuarios/editar",
                     "/api/usuarios/excluir", "/api/programas/desinstalar",
                     "/api/usuarios/hostname",
                     "/api/monitoramento/buscar", "/api/monitoramento/cadastrar",
                     "/api/monitoramento/instalar", "/api/monitoramento/excluir",
-                    "/api/monitoramento/limpar"):
+                    "/api/monitoramento/limpar", "/api/vpn/instalar"):
         checar(f"POST {caminho} sem token", status(caminho, "POST"), 403)
 
     print("\n[4] Origem e Host precisam ser da própria janela")
@@ -175,6 +178,41 @@ def main() -> int:
                 _quebrados.append(f"{os.path.basename(_js)}:{_src[:_m.start()].count(chr(10)) + 1}"
                                   f" -> {_m.group(1)}")
     checar(f"referências quebradas ({len(_ids)} ids no HTML)", _quebrados, [])
+
+    print("\n[6c] Toda view do showView está na regra flex do CSS")
+    # showView() aplica display:flex. Sem flex-direction:column os cards se
+    # alinham em LINHA e a aba vira um amasso horizontal. Ja aconteceu duas
+    # vezes: com a #viewMonitor e com a #viewVpn.
+    _css = open(os.path.join(RAIZ, "web", "style.css"), encoding="utf-8").read()
+    _js_views = open(os.path.join(RAIZ, "web", "usuarios.js"), encoding="utf-8").read()
+    _bloco = _re.search(r"const views = \{(.*?)\};", _js_views, _re.S)
+    _nomes = _re.findall(r"'(view[A-Za-z]+)'", _bloco.group(1)) if _bloco else []
+    _regra = _re.search(r"^([^{]*#viewMain[^{]*)\{([^}]*)\}", _css, _re.M)
+    _seletores = _regra.group(1) if _regra else ""
+    _coluna = "column" in (_regra.group(2) if _regra else "")
+    _fora = [v for v in _nomes if f"#{v}" not in _seletores]
+    checar(f"views registradas no showView ({len(_nomes)})", _fora, [])
+    checar("a regra aplica flex-direction:column", _coluna, True)
+
+    print("\n[7d] VPN")
+    # Usuario e senha vao para um arquivo que o OpenVPN le linha a linha: uma
+    # quebra de linha no meio partiria a credencial em duas e a conexao
+    # falharia com um erro que nao aponta para ca.
+    _val = agente.vpn._validar
+    checar("credencial valida passa", _val("joao.silva", "senha123"), "")
+    checar("usuario vazio e recusado", bool(_val("", "x")), True)
+    checar("senha vazia e recusada", bool(_val("joao", "")), True)
+    checar("quebra de linha no usuario", bool(_val("jo\nao", "x")), True)
+    checar("quebra de linha na senha", bool(_val("joao", "se\nnha")), True)
+    # Um auth-user-pass pelado significa "pergunte na tela" -- so com caminho
+    # a credencial gravada e usada de fato.
+    _la = agente.vpn._linha_auth
+    checar("auth-user-pass sem arquivo nao conta", _la("client\nauth-user-pass\n"), None)
+    checar("auth-user-pass com arquivo conta",
+           bool(_la('client\nauth-user-pass "C:\\x\\a.txt"\n')), True)
+    _st = agente.vpn.status()
+    for campo in ("instalado", "perfis", "com_credencial", "instalador", "servico"):
+        checar(f"/status da VPN devolve '{campo}'", campo in _st, True)
 
     print("\n[7c] Exclusão exige patrimônio e número de série")
     # A API só apaga a máquina cuja série bate com a lida da BIOS. Se o agente
