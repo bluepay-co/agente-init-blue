@@ -158,6 +158,24 @@ def main() -> int:
         checar(f"descarta {lixo[:14]!r}", val_ad(lixo), "")
     checar("/status expõe 'anydesk_id'", "anydesk_id" in corpo, True)
 
+    print("\n[6b] Todo getElementById aponta para um id que existe")
+    # Um id errado aqui não quebra na hora: getElementById devolve null e o
+    # TypeError só estoura quando o técnico clica, dentro de um try/catch que
+    # mostra uma mensagem sobre outra coisa. Já aconteceu com o botão de
+    # limpeza (monUrlApi/monToken em vez de monCfgUrlApi/monCfgToken).
+    import glob as _glob
+    import re as _re
+    _html = open(os.path.join(RAIZ, "web", "index.html"), encoding="utf-8").read()
+    _ids = set(_re.findall(r'id="([^"]+)"', _html))
+    _quebrados = []
+    for _js in sorted(_glob.glob(os.path.join(RAIZ, "web", "*.js"))):
+        _src = open(_js, encoding="utf-8").read()
+        for _m in _re.finditer(r"getElementById\(\s*['\"]([^'\"]+)['\"]\s*\)", _src):
+            if _m.group(1) not in _ids:
+                _quebrados.append(f"{os.path.basename(_js)}:{_src[:_m.start()].count(chr(10)) + 1}"
+                                  f" -> {_m.group(1)}")
+    checar(f"referências quebradas ({len(_ids)} ids no HTML)", _quebrados, [])
+
     print("\n[7c] Exclusão exige patrimônio e número de série")
     # A API só apaga a máquina cuja série bate com a lida da BIOS. Se o agente
     # mandasse a requisição sem série, a API recusaria com 400 e o técnico veria

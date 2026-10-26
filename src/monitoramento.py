@@ -689,9 +689,9 @@ def _remover_pasta() -> Tuple[bool, str]:
     """Apaga C:\\BlueControl. Só depois do serviço e da tarefa saírem: com os
     .exe ainda em execução o Windows recusa a remoção."""
     if not INSTALL_DIR.exists():
-        return True, "a pasta já não existia"
+        return True, "ja_nao_existia"
     ultimo = ""
-    for tentativa in range(3):
+    for _ in range(3):
         try:
             shutil.rmtree(INSTALL_DIR)
             return True, ""
@@ -734,8 +734,10 @@ def limpar(params: dict) -> None:
 
         _progresso(70, "Apagando C:\\BlueControl…")
         ok_pasta, motivo = _remover_pasta()
-        if ok_pasta:
-            _log(f"Pasta {INSTALL_DIR} removida {motivo}".strip(), "ok")
+        if ok_pasta and motivo == "ja_nao_existia":
+            _log(f"Pasta {INSTALL_DIR} já não existia", "ok")
+        elif ok_pasta:
+            _log(f"Pasta {INSTALL_DIR} removida", "ok")
         else:
             _log(f"Não consegui apagar {INSTALL_DIR}: {motivo}", "err")
             _log("Reinicie a máquina e rode a limpeza de novo — algum arquivo "

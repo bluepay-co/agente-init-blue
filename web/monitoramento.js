@@ -20,6 +20,7 @@ let _monSelecionada = null;   // {patrimonio_interno, modelo, ...} quando veio d
 let _monBuscaTimer = null;
 let _monResultados = [];
 let _monPrefilled = false;    // URL/token já preenchidos uma vez (ver monCarregarStatus)
+let _monLimpando = false;     // limpeza em curso: o progresso é dela, não da instalação
 
 // ── Status atual ─────────────────────────────
 
@@ -82,7 +83,13 @@ async function monCarregarStatus() {
       }
     }
 
-    if (!d.existe) return;
+    // Esconde de volta: depois da limpeza o /status responde existe=false, e
+    // sem isto o card continuaria na tela anunciando uma máquina que acabou
+    // de ser removida.
+    if (!d.existe) {
+      document.getElementById('monStatusCard').style.display = 'none';
+      return;
+    }
 
     document.getElementById('monStatusCard').style.display = 'block';
     document.getElementById('monStatusPatrimonio').textContent = `Patrimônio ${d.patrimonio}`;
@@ -228,13 +235,24 @@ function _monHandleEvent(event) {
     } else if (e.type === 'mon_progresso') {
       monSetProgress(e.pct, e.texto, e.ok, e.erro);
       if (e.pct >= 100) {
-        const btn = document.getElementById('monBtnInstalar');
-        btn.disabled = false;
-        btn.textContent = e.ok ? '✔  INSTALADO'
-                        : e.erro ? 'FALHOU — TENTAR DE NOVO'
-                        : 'SALVAR E INSTALAR';
-        btn.classList.toggle('success', !!e.ok);
-        btn.classList.toggle('erro', !!e.erro);
+        // Instalação e limpeza compartilham o mesmo canal de progresso. Sem
+        // distinguir, o fim de uma limpeza escrevia "✔ INSTALADO" no botão de
+        // instalar e deixava o de limpar travado em "REMOVENDO…".
+        if (_monLimpando) {
+          const btnL = document.getElementById('monBtnLimpar');
+          btnL.disabled = false;
+          btnL.textContent = e.erro ? 'FALHOU — TENTAR DE NOVO'
+                                    : 'Excluir máquina e limpar o agente';
+          _monLimpando = false;
+        } else {
+          const btn = document.getElementById('monBtnInstalar');
+          btn.disabled = false;
+          btn.textContent = e.ok ? '✔  INSTALADO'
+                          : e.erro ? 'FALHOU — TENTAR DE NOVO'
+                          : 'SALVAR E INSTALAR';
+          btn.classList.toggle('success', !!e.ok);
+          btn.classList.toggle('erro', !!e.erro);
+        }
         if (_monEventSource) { _monEventSource.close(); _monEventSource = null; }
         if (e.ok) setTimeout(monCarregarStatus, 1000);
       }
@@ -373,6 +391,7 @@ async function monPedirLimpeza() {
   const btn = document.getElementById('monBtnLimpar');
   btn.disabled = true;
   btn.textContent = 'REMOVENDO…';
+  _monLimpando = true;
 
   if (!_monEventSource) {
     _monEventSource = apiStream('/api/stream');
@@ -383,8 +402,8 @@ async function monPedirLimpeza() {
   // a máquina limpa e o cadastro órfão no painel, sem nada aqui para repetir.
   try {
     const d = await apiPost('/api/monitoramento/excluir', {
-      url_api: document.getElementById('monUrlApi').value.trim(),
-      token_agente: document.getElementById('monToken').value.trim(),
+      url_api: document.getElementById('monCfgUrlApi').value.trim(),
+      token_agente: document.getElementById('monCfgToken').value.trim(),
       patrimonio,
     });
     if (!d.ok) {
@@ -392,6 +411,7 @@ async function monPedirLimpeza() {
       monLog('Nada foi apagado nesta máquina — corrija e tente de novo.', 'info');
       btn.disabled = false;
       btn.textContent = 'Excluir máquina e limpar o agente';
+      _monLimpando = false;
       return;
     }
     monLog(`Cadastro ${d.patrimonio} removido do BlueControl`, 'ok');
@@ -399,6 +419,7 @@ async function monPedirLimpeza() {
     monLog('Falha ao contactar o agente local.', 'err');
     btn.disabled = false;
     btn.textContent = 'Excluir máquina e limpar o agente';
+    _monLimpando = false;
     return;
   }
 
@@ -408,5 +429,6 @@ async function monPedirLimpeza() {
     monLog('Falha ao iniciar a limpeza local.', 'err');
     btn.disabled = false;
     btn.textContent = 'Excluir máquina e limpar o agente';
+    _monLimpando = false;
   }
 }
