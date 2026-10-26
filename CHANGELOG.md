@@ -3,6 +3,44 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 Este projeto segue [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [4.0.0] — 2026-10-26
+
+### Adicionado
+- Aba **VPN**: instala o OpenVPN a partir do export do pfSense, grava a
+  credencial do colaborador (cada um tem a sua), aponta o perfil para ela,
+  **confirma conectando de verdade** e deixa a VPN subindo sozinha no boot.
+  Botão de remoção que apaga credencial, perfis e o próprio OpenVPN.
+- Conexão automática: o perfil vai para `config-auto` (com o CA e a chave
+  `tls-auth`) e o `OpenVPNService` passa a iniciar com o Windows — antes a VPN
+  só conectava quando alguém logava, abria a bandeja e clicava.
+- Perfil renomeado para um nome legível no OpenVPN GUI, em vez do
+  `saturno-UDP4-1194-config` gerado pelo pfSense.
+- Diagnóstico de falha de conexão: o destino do perfil, a causa traduzida
+  (DNS, porta recusada, sem rota, handshake vazio, arquivo que não abre) e o
+  log completo do teste em `C:\ProgramData\BlueControl\`.
+- Aba **Monitoramento**: AnyDesk ID detectado da própria máquina, patrimônio
+  interno informado, status de estoque e senha de acesso não supervisionado.
+- Botão de **excluir a máquina e limpar o agente**: apaga o cadastro no
+  BlueControl via API (só a máquina cuja série bate com a lida da BIOS),
+  remove serviços, tarefas e pastas.
+- Número de série lido automaticamente da BIOS no cadastro.
+
+### Corrigido
+- A credencial da VPN era gravada mas o perfil não apontava para ela. Três
+  bugs na mesma linha, em sequência: `re.sub` interpretando `\P` do caminho
+  como escape, a escolha de um perfil órfão sem o CA ao lado, e a barra
+  invertida crua — que o próprio openvpn trata como escape de shell e que
+  fazia ele recusar o perfil antes de abrir socket.
+- Janela invisível do instalador do OpenVPN travava a aba indefinidamente.
+- `icacls` com nomes localizados (`SISTEMA`/`Administradores`) falhava no
+  Windows em português e deixava o arquivo de credencial sem permissão alguma.
+- O log da VPN escrevia no mesmo elemento da barra de progresso, destruindo a
+  mensagem com a causa do erro.
+- `#viewVpn` fora da regra flex do CSS, e `shutil` usado sem import.
+- O aviso de NAT reflection aparecia em qualquer falha de rede, inclusive num
+  teste via 4G, mandando investigar o firewall sem motivo.
+- Um `/` solto depois de um comentário HTML aparecia como texto na aba Setup.
+
 ## [3.1.0] — 2026-10-23
 
 ### Adicionado

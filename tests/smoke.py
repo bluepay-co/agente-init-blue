@@ -180,6 +180,18 @@ def main() -> int:
                                   f" -> {_m.group(1)}")
     checar(f"referências quebradas ({len(_ids)} ids no HTML)", _quebrados, [])
 
+    print("\n[6e] Sem texto solto entre as tags do HTML")
+    # Um "/" esquecido depois de "<!-- Opções -->" virava um nó de texto e
+    # aparecia como uma barrinha na tela. Nenhum teste de rota pega isso: o
+    # HTML e valido, a pagina carrega, e so o olho ve. Procura caracteres
+    # soltos entre ">" e "<" que nao sejam conteudo de verdade.
+    _html = open(os.path.join(RAIZ, "web", "index.html"), encoding="utf-8").read()
+    _lixo = __import__("re").findall(r">(\s*[/\\|;,]+\s*)<", _html)
+    checar("nenhum caractere solto entre tags", _lixo, [])
+    # Sobra de comentario e o caso concreto que aconteceu.
+    checar("nada colado no fim de um comentario",
+           __import__("re").findall(r"-->[^\s<]", _html), [])
+
     print("\n[6d] Nenhum módulo usado sem import")
     # "import shutil" esquecido nao quebra o carregamento: so estoura com
     # NameError na hora em que a funcao roda -- e aqui isso seria no meio de

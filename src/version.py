@@ -8,4 +8,4 @@ Consumida por:
 Ao lançar uma versão, altere APENAS aqui e registre a mudança no CHANGELOG.md.
 """
 
-__version__ = "3.1.0"
+__version__ = "4.0.0"
