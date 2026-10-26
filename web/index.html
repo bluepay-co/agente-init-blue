@@ -512,6 +512,9 @@
              não vai para o BlueControl nem fica dentro do executável.</p>
         </div>
 
+        <!-- Log da instalação -->
+        <div class="log-box" id="vpnLogBox"></div>
+
         <div class="progress-wrap">
           <div class="progress-track">
             <div class="progress-bar" id="vpnProgressBar"></div>
@@ -522,6 +525,17 @@
         <button class="btn-executar" id="vpnBtnInstalar" onclick="vpnInstalar()">
           INSTALAR VPN
         </button>
+
+        <div class="card">
+          <div class="zona-perigo" style="margin-top:0; padding-top:0; border-top:none;">
+            <button class="btn-perigo" id="vpnBtnRemover" onclick="vpnRemover()">
+              Remover a VPN e limpar tudo
+            </button>
+            <p class="hint">Desinstala o OpenVPN, apaga os perfis e as credenciais
+               gravadas. Use quando a instalação ficar num estado estranho e você
+               quiser recomeçar do zero.</p>
+          </div>
+        </div>
 
       </div><!-- /viewVpn -->
 

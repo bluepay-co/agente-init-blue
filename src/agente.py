@@ -402,6 +402,13 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
                 p.get("patrimonio", ""))
             self._json_response(data, status or 502)
 
+        elif self._rota() == "/api/vpn/limpar":
+            p = self._read_json_body()
+            threading.Thread(
+                target=vpn.limpar, args=(p,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+
         elif self._rota() == "/api/vpn/instalar":
             p = self._read_json_body()
             threading.Thread(

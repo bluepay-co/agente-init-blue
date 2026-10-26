@@ -176,22 +176,30 @@ def _gravar_credencial(perfil: Path, usuario: str, senha: str) -> Tuple[bool, st
     """
     destino = perfil.parent / _ARQ_CREDENCIAL
     try:
-        destino.write_text("", encoding="utf-8")
-        # icacls antes de escrever a senha: entre criar e proteger existe uma
-        # janela em que o arquivo herda as permissões da pasta.
-        subprocess.run(
-            ["icacls", str(destino), "/inheritance:r",
-             "/grant:r", "SYSTEM:(F)", "/grant:r", "Administradores:(F)"],
-            capture_output=True, creationflags=_NO_WINDOW)
-        # Em Windows em inglês o grupo chama Administrators; roda os dois e
-        # ignora o que falhar, porque não dá para saber o idioma de antemão.
-        subprocess.run(
-            ["icacls", str(destino), "/grant:r", "Administrators:(F)"],
-            capture_output=True, creationflags=_NO_WINDOW)
+        # Conteúdo primeiro, ACL depois. A ordem inversa ja quebrou aqui: o
+        # icacls era chamado com os nomes "SYSTEM"/"Administrators", que em
+        # Windows português são "SISTEMA"/"Administradores". O comando falhava
+        # DEPOIS de aplicar /inheritance:r, o arquivo ficava sem nenhuma
+        # permissão e a gravação seguinte morria com acesso negado.
         destino.write_text(f"{usuario}\n{senha}\n", encoding="utf-8")
-        return True, str(destino)
     except Exception as e:
-        return False, str(e)
+        return False, f"não consegui criar {destino}: {e}"
+
+    # SIDs bem conhecidos no lugar dos nomes: *S-1-5-18 é o SYSTEM e
+    # *S-1-5-32-544 o grupo Administradores em qualquer idioma do Windows.
+    r = subprocess.run(
+        ["icacls", str(destino), "/inheritance:r",
+         "/grant:r", "*S-1-5-18:(F)", "/grant:r", "*S-1-5-32-544:(F)"],
+        capture_output=True, text=True, creationflags=_NO_WINDOW)
+    if r.returncode != 0:
+        # Não derruba a instalação — a VPN precisa funcionar —, mas o arquivo
+        # fica com as permissões herdadas da pasta, e em Program Files isso
+        # significa legível por qualquer usuário da máquina. Precisa aparecer.
+        saida = ((r.stdout or "") + (r.stderr or "")).strip().replace("\n", " ")
+        _log(f"ATENÇÃO: não consegui restringir o acesso a {destino.name} "
+             f"({saida or 'icacls falhou'}). A senha está gravada, mas legível "
+             "por outros usuários desta máquina.", "warn")
+    return True, str(destino)
 
 
 def _apontar_perfil(perfil: Path, credencial: Path) -> Tuple[bool, str]:
@@ -307,3 +315,114 @@ def instalar(params: dict) -> None:
     except Exception as e:
         _log(f"Erro inesperado: {e}", "err")
         _progresso(100, "Falha na instalação da VPN", erro=True)
+
+
+# ══════════════════════════════════════════════
+#  LIMPEZA (desfaz a instalação da VPN)
+# ══════════════════════════════════════════════
+
+def _codigos_produto() -> List[str]:
+    """Códigos MSI do OpenVPN instalados, lidos do registro.
+
+    Pelo código, e não pelo UninstallString: o UninstallString do MSI vem como
+    "MsiExec.exe /I{GUID}" — /I, de instalar — e repetir isso abriria a tela
+    de manutenção em vez de desinstalar.
+    """
+    ps = (
+        "$ErrorActionPreference='SilentlyContinue';"
+        "$r = @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
+        "'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*');"
+        "Get-ItemProperty $r | Where-Object { $_.DisplayName -like '*OpenVPN*' } |"
+        "ForEach-Object { $_.PSChildName }"
+    )
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            capture_output=True, text=True, timeout=60, creationflags=_NO_WINDOW)
+        achados = []
+        for linha in (r.stdout or "").splitlines():
+            codigo = linha.strip()
+            # Só GUIDs: a chave de um instalador não-MSI tem nome livre e
+            # passar isso ao msiexec só geraria erro.
+            if re.fullmatch(r"\{[0-9A-Fa-f-]{36}\}", codigo):
+                achados.append(codigo)
+        return achados
+    except Exception as e:
+        _registrar(f"[vpn] falha ao listar produtos OpenVPN: {e}")
+        return []
+
+
+def limpar(params: dict) -> None:
+    """Remove a VPN desta máquina: credenciais, perfis e o próprio OpenVPN.
+
+    As credenciais saem PRIMEIRO. Se a desinstalação falhar no meio, o que não
+    pode sobrar é a senha do colaborador em disco — o cliente sem credencial é
+    só um incômodo, a credencial órfã é um problema.
+    """
+    try:
+        _progresso(10, "Apagando credenciais gravadas…")
+        apagados = 0
+        for perfil in _perfis():
+            cred = perfil.parent / _ARQ_CREDENCIAL
+            try:
+                if cred.exists():
+                    cred.unlink()
+                    apagados += 1
+                    _log(f"Credencial {cred.name} apagada", "ok")
+            except Exception as e:
+                _log(f"Não consegui apagar {cred}: {e}", "err")
+        if not apagados:
+            _log("Nenhuma credencial gravada encontrada", "muted")
+
+        _progresso(30, "Apagando perfis .ovpn…")
+        for perfil in _perfis():
+            try:
+                perfil.unlink()
+                _log(f"Perfil {perfil.name} apagado", "ok")
+            except Exception as e:
+                _log(f"Não consegui apagar {perfil.name}: {e}", "err")
+
+        _progresso(50, "Desinstalando o OpenVPN…")
+        codigos = _codigos_produto()
+        if not codigos:
+            _log("OpenVPN não aparece na lista de programas instalados "
+                 "(pode já ter sido removido).", "info")
+        for codigo in codigos:
+            _log(f"Desinstalando {codigo}…", "muted")
+            try:
+                r = subprocess.run(
+                    ["msiexec", "/x", codigo, "/qn", "/norestart"],
+                    capture_output=True, timeout=900, creationflags=_NO_WINDOW)
+                # 3010 = sucesso, mas pede reinício. Não é falha.
+                if r.returncode in (0, 3010):
+                    _log(f"{codigo} desinstalado"
+                         + (" (requer reinício)" if r.returncode == 3010 else ""), "ok")
+                else:
+                    _log(f"msiexec devolveu {r.returncode} para {codigo}", "warn")
+            except subprocess.TimeoutExpired:
+                _log(f"A desinstalação de {codigo} passou de 15 minutos.", "err")
+
+        _progresso(80, "Removendo o que sobrou…")
+        for d in _DIRS_OPENVPN:
+            for sub in ("config", "config-auto"):
+                alvo = d / sub
+                if not alvo.is_dir():
+                    continue
+                for resto in list(alvo.glob("*.ovpn")) + list(alvo.glob(_ARQ_CREDENCIAL)):
+                    try:
+                        resto.unlink()
+                        _log(f"Removido {resto}", "ok")
+                    except Exception as e:
+                        _log(f"Não consegui remover {resto}: {e}", "warn")
+
+        if _dir_openvpn():
+            _log("A pasta do OpenVPN ainda existe — se a desinstalação pediu "
+                 "reinício, reinicie e rode a limpeza de novo.", "warn")
+            _progresso(100, "Limpeza parcial — veja o log", erro=True)
+        else:
+            _registrar("[vpn] VPN removida da maquina")
+            _progresso(100, "VPN removida — pode instalar do zero", ok=True)
+
+    except Exception as e:
+        _log(f"Erro inesperado na limpeza: {e}", "err")
+        _progresso(100, "Falha na limpeza da VPN", erro=True)

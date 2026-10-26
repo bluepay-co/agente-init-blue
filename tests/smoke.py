@@ -97,7 +97,8 @@ def main() -> int:
                     "/api/usuarios/hostname",
                     "/api/monitoramento/buscar", "/api/monitoramento/cadastrar",
                     "/api/monitoramento/instalar", "/api/monitoramento/excluir",
-                    "/api/monitoramento/limpar", "/api/vpn/instalar"):
+                    "/api/monitoramento/limpar", "/api/vpn/instalar",
+                    "/api/vpn/limpar"):
         checar(f"POST {caminho} sem token", status(caminho, "POST"), 403)
 
     print("\n[4] Origem e Host precisam ser da própria janela")
@@ -210,6 +211,12 @@ def main() -> int:
     checar("auth-user-pass sem arquivo nao conta", _la("client\nauth-user-pass\n"), None)
     checar("auth-user-pass com arquivo conta",
            bool(_la('client\nauth-user-pass "C:\\x\\a.txt"\n')), True)
+    # So GUID vira argumento do msiexec: nome livre de instalador nao-MSI
+    # geraria erro, e um valor inesperado ali e comando para o desinstalador.
+    _guid = _re.fullmatch(r"\{[0-9A-Fa-f-]{36}\}", "{12345678-1234-1234-1234-123456789ABC}")
+    checar("GUID valido e aceito pelo filtro", bool(_guid), True)
+    checar("nome livre nao passa",
+           bool(_re.fullmatch(r"\{[0-9A-Fa-f-]{36}\}", "OpenVPNClient")), False)
     _st = agente.vpn.status()
     for campo in ("instalado", "perfis", "com_credencial", "instalador", "servico"):
         checar(f"/status da VPN devolve '{campo}'", campo in _st, True)

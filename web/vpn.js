@@ -8,16 +8,26 @@
 
 let _vpnEventSource = null;
 let _vpnInstalando = false;
+let _vpnRemovendo = false;   // separa o progresso da remocao do da instalacao
 
 function _vpnEsc(s) {
   return String(s === null || s === undefined ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// Caixa própria, que ACUMULA as linhas. Antes isto escrevia no
+// vpnProgressLabel — o mesmo elemento da barra de progresso —, então a
+// mensagem com a causa do erro era sobrescrita pelo texto final na mesma
+// hora e nunca dava para saber o que tinha falhado.
 function vpnLog(msg, tipo) {
-  const el = document.getElementById('vpnProgressLabel');
-  if (el) el.textContent = msg;
-  if (tipo === 'err' || tipo === 'warn') console.warn('[vpn]', msg);
+  const box = document.getElementById('vpnLogBox');
+  if (!box) return;
+  box.classList.add('show');
+  const linha = document.createElement('span');
+  linha.className = 'log-line ' + (tipo || 'muted');
+  linha.textContent = msg;
+  box.appendChild(linha);
+  box.scrollTop = box.scrollHeight;
 }
 
 function vpnSetProgress(pct, texto, ok, erro) {
@@ -81,13 +91,25 @@ function _vpnHandleEvent(event) {
     } else if (e.type === 'vpn_progresso') {
       vpnSetProgress(e.pct, e.texto, e.ok, e.erro);
       if (e.pct >= 100) {
-        const btn = document.getElementById('vpnBtnInstalar');
-        btn.disabled = false;
-        btn.textContent = e.ok ? '✔  VPN PRONTA'
-                        : e.erro ? 'FALHOU — TENTAR DE NOVO'
-                        : 'INSTALAR VPN';
-        btn.classList.toggle('success', !!e.ok);
-        btn.classList.toggle('erro', !!e.erro);
+        // Instalar e remover compartilham o canal vpn_progresso. Sem separar,
+        // o fim de uma remoção escreveria "✔ VPN PRONTA" no botão de instalar
+        // e deixaria o de remover travado em "REMOVENDO…" — foi o que
+        // aconteceu na aba Monitoramento.
+        if (_vpnRemovendo) {
+          const btnR = document.getElementById('vpnBtnRemover');
+          btnR.disabled = false;
+          btnR.textContent = e.erro ? 'FALHOU — TENTAR DE NOVO'
+                                    : 'Remover a VPN e limpar tudo';
+          _vpnRemovendo = false;
+        } else {
+          const btn = document.getElementById('vpnBtnInstalar');
+          btn.disabled = false;
+          btn.textContent = e.ok ? '✔  VPN PRONTA'
+                          : e.erro ? 'FALHOU — TENTAR DE NOVO'
+                          : 'INSTALAR VPN';
+          btn.classList.toggle('success', !!e.ok);
+          btn.classList.toggle('erro', !!e.erro);
+        }
         _vpnInstalando = false;
         if (_vpnEventSource) { _vpnEventSource.close(); _vpnEventSource = null; }
         if (e.ok) setTimeout(vpnCarregarStatus, 1000);
@@ -130,5 +152,39 @@ async function vpnInstalar() {
     btn.disabled = false;
     btn.textContent = 'INSTALAR VPN';
     _vpnInstalando = false;
+  }
+}
+
+
+// ── Remover a VPN ─────────────────────────────────────────────────────────
+// Confirmação simples, não por digitação como a exclusão de máquina: aqui
+// nada é apagado no servidor e refazer é só reinstalar. O que se perde é a
+// credencial do colaborador, que ele mesmo sabe informar de novo.
+async function vpnRemover() {
+  if (_vpnInstalando) return;
+  if (!confirm('Remover a VPN desta máquina?\n\n'
+             + 'Desinstala o OpenVPN e apaga os perfis e as credenciais '
+             + 'gravadas. Depois é só instalar de novo pela aba.')) return;
+
+  const btn = document.getElementById('vpnBtnRemover');
+  btn.disabled = true;
+  btn.textContent = 'REMOVENDO…';
+  _vpnInstalando = true;   // bloqueia instalar e remover ao mesmo tempo
+  _vpnRemovendo = true;
+
+  if (!_vpnEventSource) {
+    _vpnEventSource = apiStream('/api/stream');
+    _vpnEventSource.onmessage = _vpnHandleEvent;
+    _vpnEventSource.onerror = () => vpnLog('Conexão com o agente local perdida.', 'warn');
+  }
+
+  try {
+    await apiPost('/api/vpn/limpar', {});
+  } catch (e) {
+    vpnLog('Falha ao contactar o agente local.', 'err');
+    btn.disabled = false;
+    btn.textContent = 'Remover a VPN e limpar tudo';
+    _vpnInstalando = false;
+    _vpnRemovendo = false;
   }
 }
