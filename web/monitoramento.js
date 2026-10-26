@@ -346,3 +346,67 @@ function monToggleAvancadoSeOculto() {
   const el = document.getElementById('monAvancadoFields');
   if (el && el.style.display === 'none') monToggleAvancado();
 }
+
+
+// ── Excluir máquina + limpar o agente ──────────────────────────────────────
+// Confirmação por digitação, não um "tem certeza?": a ação apaga métricas e
+// histórico no servidor e não tem desfazer. Digitar o patrimônio obriga a
+// olhar qual máquina está na frente, que é o erro que se quer evitar.
+async function monPedirLimpeza() {
+  const patrimonio = (document.getElementById('monStatusPatrimonio').textContent || '')
+    .replace('Patrimônio', '').trim();
+  if (!patrimonio || patrimonio === '—') {
+    monLog('Não há máquina instalada nesta estação para remover.', 'warn');
+    return;
+  }
+
+  const digitado = prompt(
+    `Isto apaga DEFINITIVAMENTE o patrimônio ${patrimonio} do BlueControl ` +
+    `(cadastro, métricas, eventos e inventário) e remove o agente desta máquina.\n\n` +
+    `Não há como desfazer.\n\nDigite ${patrimonio} para confirmar:`);
+  if (digitado === null) return;
+  if (digitado.trim().toUpperCase() !== patrimonio.toUpperCase()) {
+    monLog('Confirmação não bateu com o patrimônio — nada foi feito.', 'warn');
+    return;
+  }
+
+  const btn = document.getElementById('monBtnLimpar');
+  btn.disabled = true;
+  btn.textContent = 'REMOVENDO…';
+
+  if (!_monEventSource) {
+    _monEventSource = apiStream('/api/stream');
+    _monEventSource.onmessage = _monHandleEvent;
+  }
+
+  // Servidor primeiro: com o agente local já apagado, um erro na API deixaria
+  // a máquina limpa e o cadastro órfão no painel, sem nada aqui para repetir.
+  try {
+    const d = await apiPost('/api/monitoramento/excluir', {
+      url_api: document.getElementById('monUrlApi').value.trim(),
+      token_agente: document.getElementById('monToken').value.trim(),
+      patrimonio,
+    });
+    if (!d.ok) {
+      monLog(`Não removi do BlueControl: ${d.detail || 'erro desconhecido'}`, 'err');
+      monLog('Nada foi apagado nesta máquina — corrija e tente de novo.', 'info');
+      btn.disabled = false;
+      btn.textContent = 'Excluir máquina e limpar o agente';
+      return;
+    }
+    monLog(`Cadastro ${d.patrimonio} removido do BlueControl`, 'ok');
+  } catch (e) {
+    monLog('Falha ao contactar o agente local.', 'err');
+    btn.disabled = false;
+    btn.textContent = 'Excluir máquina e limpar o agente';
+    return;
+  }
+
+  try {
+    await apiPost('/api/monitoramento/limpar', {});
+  } catch (e) {
+    monLog('Falha ao iniciar a limpeza local.', 'err');
+    btn.disabled = false;
+    btn.textContent = 'Excluir máquina e limpar o agente';
+  }
+}

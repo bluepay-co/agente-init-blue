@@ -158,6 +158,31 @@ def buscar(url_api: str, token: str, q: str) -> Tuple[int, dict]:
     return _http_json("GET", alvo, token)
 
 
+def excluir(url_api: str, token: str, patrimonio: str) -> Tuple[int, dict]:
+    """Remove o cadastro no BlueControl. A série vai no corpo porque a API só
+    apaga a máquina cujo número de série bate com o desta aqui — é o que impede
+    o token, que é o mesmo no parque todo, de apagar inventário alheio."""
+    base, erro = normalizar_url(url_api)
+    if erro:
+        return 0, {"detail": erro}
+    if not token:
+        return 0, {"detail": "Token do agente em branco — preencha o campo em "
+                             "\"Servidor\"."}
+    if not (patrimonio or "").strip():
+        return 0, {"detail": "Patrimônio em branco — não sei o que excluir."}
+
+    serie = serial_maquina()
+    if not serie:
+        return 0, {"detail": "Não consegui ler o número de série desta máquina, "
+                             "que é o que a API exige para confirmar a exclusão. "
+                             "Remova pelo painel."}
+    # safe="" para escapar a barra também: quote() a preserva por padrão, e um
+    # patrimônio como "PER/0087" viraria outro caminho e devolveria 404.
+    alvo = (f"{base}/api/agente/equipamentos/"
+            f"{urllib.parse.quote(patrimonio.strip(), safe='')}")
+    return _http_json("DELETE", alvo, token, {"numero_serie": serie})
+
+
 def cadastrar(url_api: str, token: str, dados: dict) -> Tuple[int, dict]:
     base, erro = normalizar_url(url_api)
     if erro:
@@ -630,3 +655,103 @@ def instalar(params: dict) -> None:
     except Exception as e:
         _log(f"Erro inesperado: {e}", "err")
         _progresso(100, "Falha na instalação", erro=True)
+
+
+# ══════════════════════════════════════════════
+#  LIMPEZA (desfaz a instalação nesta máquina)
+# ══════════════════════════════════════════════
+
+def _parar_servico() -> bool:
+    """Para e remove o serviço de métricas. O sleep entre stop e delete não é
+    superstição: o "sc delete" num serviço ainda parando marca para remoção e
+    só efetiva no reboot, e aí a pasta continua em uso e não apaga."""
+    subprocess.run(["sc", "stop", SERVICE_NAME], capture_output=True,
+                   creationflags=_NO_WINDOW)
+    time.sleep(2)
+    r = subprocess.run(["sc", "delete", SERVICE_NAME], capture_output=True,
+                       text=True, creationflags=_NO_WINDOW)
+    # 1060 = serviço não existe: para a limpeza isso é sucesso, não erro.
+    return r.returncode == 0 or "1060" in (r.stdout or "") + (r.stderr or "")
+
+
+def _remover_acesso_remoto() -> bool:
+    subprocess.run(["taskkill", "/F", "/IM", REMOTE_EXE], capture_output=True,
+                   creationflags=_NO_WINDOW)
+    r = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+         f"Unregister-ScheduledTask -TaskName '{REMOTE_TASK}' -Confirm:$false "
+         "-ErrorAction SilentlyContinue"],
+        capture_output=True, text=True, creationflags=_NO_WINDOW)
+    return r.returncode == 0
+
+
+def _remover_pasta() -> Tuple[bool, str]:
+    """Apaga C:\\BlueControl. Só depois do serviço e da tarefa saírem: com os
+    .exe ainda em execução o Windows recusa a remoção."""
+    if not INSTALL_DIR.exists():
+        return True, "a pasta já não existia"
+    ultimo = ""
+    for tentativa in range(3):
+        try:
+            shutil.rmtree(INSTALL_DIR)
+            return True, ""
+        except Exception as e:
+            ultimo = str(e)
+            time.sleep(2)
+    return False, ultimo
+
+
+def limpar(params: dict) -> None:
+    """Desfaz nesta máquina tudo o que o instalar() criou, na ordem inversa.
+
+    Não mexe no serviço WinRM: ele é compartilhado e pode ter sido ligado por
+    GPO ou por outra ferramenta antes do BlueControl existir aqui. Desligá-lo
+    quebraria gerenciamento alheio para desfazer algo que talvez não tenhamos
+    feito. As duas regras de firewall são nossas, têm nome próprio, e saem.
+    """
+    try:
+        _progresso(10, "Parando o serviço de métricas…")
+        if _parar_servico():
+            _log(f"Serviço {SERVICE_NAME} parado e removido", "ok")
+        else:
+            _log(f"Não consegui remover o serviço {SERVICE_NAME} — pode exigir "
+                 "reinício da máquina", "warn")
+
+        _progresso(30, "Removendo o acesso remoto…")
+        if _remover_acesso_remoto():
+            _log(f"Tarefa agendada {REMOTE_TASK} removida", "ok")
+        else:
+            _log(f"Não consegui remover a tarefa {REMOTE_TASK}", "warn")
+
+        _progresso(50, "Removendo as regras de firewall…")
+        for regra in ("WinRM BlueControl", "Ping BlueControl"):
+            subprocess.run(["netsh", "advfirewall", "firewall", "delete", "rule",
+                            f"name={regra}"], capture_output=True,
+                           creationflags=_NO_WINDOW)
+        _log("Regras de firewall do BlueControl removidas", "ok")
+        _log("Serviço WinRM mantido ligado — é compartilhado, pode não ter sido "
+             "nosso. Desligue à mão se for o caso.", "info")
+
+        _progresso(70, "Apagando C:\\BlueControl…")
+        ok_pasta, motivo = _remover_pasta()
+        if ok_pasta:
+            _log(f"Pasta {INSTALL_DIR} removida {motivo}".strip(), "ok")
+        else:
+            _log(f"Não consegui apagar {INSTALL_DIR}: {motivo}", "err")
+            _log("Reinicie a máquina e rode a limpeza de novo — algum arquivo "
+                 "ainda estava em uso.", "info")
+
+        # O cache do ID some junto com a instalação: sem isso, reinstalar nesta
+        # mesma sessão reaproveitaria um ID que pode já não valer.
+        global _anydesk_cache
+        _anydesk_cache = None
+
+        if ok_pasta:
+            _progresso(100, "Limpeza concluída — a máquina está como antes",
+                       ok=True)
+        else:
+            _progresso(100, "Limpeza parcial — veja o log acima", erro=True)
+
+    except Exception as e:
+        _log(f"Erro inesperado na limpeza: {e}", "err")
+        _progresso(100, "Falha na limpeza", erro=True)

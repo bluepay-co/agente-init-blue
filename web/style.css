@@ -1096,3 +1096,28 @@ input:checked + .slider:before {
   border-color: var(--green);
   font-family: var(--font-mono);
 }
+
+/* ── Zona de perigo (excluir máquina + limpar agente) ────────────────────── */
+/* Separada por uma linha e recuada do resto do card: o botão fica no mesmo
+   cartão da situação atual, e sem essa divisão ele parece só mais uma ação. */
+.zona-perigo {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(239,68,68,0.25);
+}
+.btn-perigo {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(239,68,68,0.5);
+  background: rgba(239,68,68,0.1);
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-perigo:hover:not(:disabled) { background: var(--red); color: #fff; }
+.btn-perigo:disabled { opacity: 0.55; cursor: not-allowed; }
+.zona-perigo .hint { margin-top: 8px; }

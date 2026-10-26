@@ -392,6 +392,20 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             ).start()
             self._json_response({"ok": True})
 
+        elif self._rota() == "/api/monitoramento/excluir":
+            p = self._read_json_body()
+            status, data = monitoramento.excluir(
+                p.get("url_api", ""), p.get("token_agente", ""),
+                p.get("patrimonio", ""))
+            self._json_response(data, status or 502)
+
+        elif self._rota() == "/api/monitoramento/limpar":
+            p = self._read_json_body()
+            threading.Thread(
+                target=monitoramento.limpar, args=(p,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+
         else:
             self.send_error(404)
 

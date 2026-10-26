@@ -93,7 +93,8 @@ def main() -> int:
                     "/api/usuarios/excluir", "/api/programas/desinstalar",
                     "/api/usuarios/hostname",
                     "/api/monitoramento/buscar", "/api/monitoramento/cadastrar",
-                    "/api/monitoramento/instalar"):
+                    "/api/monitoramento/instalar", "/api/monitoramento/excluir",
+                    "/api/monitoramento/limpar"):
         checar(f"POST {caminho} sem token", status(caminho, "POST"), 403)
 
     print("\n[4] Origem e Host precisam ser da própria janela")
@@ -156,6 +157,25 @@ def main() -> int:
     for lixo in ("", "abc", "12", "0" * 20, "Display ID:"):
         checar(f"descarta {lixo[:14]!r}", val_ad(lixo), "")
     checar("/status expõe 'anydesk_id'", "anydesk_id" in corpo, True)
+
+    print("\n[7c] Exclusão exige patrimônio e número de série")
+    # A API só apaga a máquina cuja série bate com a lida da BIOS. Se o agente
+    # mandasse a requisição sem série, a API recusaria com 400 e o técnico veria
+    # um erro do servidor para algo que dava para barrar aqui.
+    excluir = agente.monitoramento.excluir
+    checar("sem patrimônio nem sai da máquina",
+           excluir("http://127.0.0.1:9", "tok", "")[0], 0)
+    checar("sem patrimônio explica o motivo",
+           "branco" in excluir("http://127.0.0.1:9", "tok", "")[1]["detail"], True)
+    checar("sem token nem sai da máquina",
+           excluir("http://127.0.0.1:9", "", "0042")[0], 0)
+    # Fora do Windows não há série para ler, então a exclusão é barrada antes
+    # de qualquer requisição — exatamente o que deve acontecer numa máquina
+    # cuja BIOS não devolve série.
+    codigo, corpo_exc = excluir("http://127.0.0.1:9", "tok", "0042")
+    checar("sem série lida, não tenta excluir", codigo, 0)
+    checar("sem série, explica por quê",
+           "número de série" in corpo_exc["detail"], True)
 
     print("\n[8] URL da API malformada")
     # A URL vem de um campo que o técnico edita. Antes, uma URL vazia estourava
