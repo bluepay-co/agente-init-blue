@@ -18,6 +18,7 @@ importa agente.py; recebe os helpers por init().
 import os
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -102,6 +103,52 @@ def _dirs_perfil() -> List[Path]:
     if dados:
         dirs.append(Path(dados) / "OpenVPN" / "config")
     return [p for p in dirs if p.is_dir()]
+
+
+# Diretivas do .ovpn que apontam para OUTRO arquivo. O export do pfSense usa
+# caminho relativo ("ca saturno-...-ca.crt"), resolvido contra a pasta do
+# perfil -- um .ovpn sozinho numa pasta nao conecta, e o openvpn morre na
+# largada sem nunca falar com o servidor. Isso nao e erro de credencial nem
+# de rede, e antes caia no mesmo "indeterminado" que uma porta bloqueada.
+_DIRETIVAS_COM_ARQUIVO = ("ca", "cert", "key", "tls-auth", "tls-crypt",
+                          "tls-crypt-v2", "dh", "crl-verify", "pkcs12")
+
+
+def arquivos_faltando(perfil: Path) -> List[str]:
+    """Arquivos que o .ovpn referencia e que nao estao ao lado dele."""
+    try:
+        texto = perfil.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return []
+    faltando = []
+    for linha in texto.splitlines():
+        limpa = linha.strip()
+        partes = limpa.split()
+        if not partes or partes[0] not in _DIRETIVAS_COM_ARQUIVO or len(partes) < 2:
+            continue
+        ref = partes[1].strip('"')
+        # Chave inline (<ca>...</ca>) nao referencia arquivo nenhum.
+        if ref.startswith("["):
+            continue
+        alvo = Path(ref)
+        if not alvo.is_absolute():
+            alvo = perfil.parent / ref
+        if not alvo.exists():
+            faltando.append(ref)
+    return faltando
+
+
+def escolher_perfil(perfis: List[Path]) -> Optional[Path]:
+    """O perfil que de fato tem chance de conectar.
+
+    Pegar perfis[0] as cegas era um erro: _dirs_perfil() varre quatro pastas,
+    e um .ovpn orfao em qualquer uma delas virava o perfil testado, falhando
+    sempre -- com a credencial certa e o servidor no ar.
+    """
+    for perfil in perfis:
+        if not arquivos_faltando(perfil):
+            return perfil
+    return perfis[0] if perfis else None
 
 
 def _perfis() -> List[Path]:
@@ -287,11 +334,47 @@ _CAUSAS_REDE = (
      "nada respondeu na porta da VPN dentro do tempo "
      "(porta bloqueada no caminho, ou -- se esta maquina esta DENTRO da rede "
      "do proprio servidor -- falta NAT reflection/hairpin no firewall)"),
+    ("Cannot open file",
+     "o perfil referencia um arquivo (CA, chave tls-auth) que nao esta na "
+     "pasta dele"),
+    ("Cannot pre-load keyfile",
+     "o perfil referencia um arquivo (CA, chave tls-auth) que nao esta na "
+     "pasta dele"),
+    ("No such file or directory",
+     "o perfil referencia um arquivo (CA, chave tls-auth) que nao esta na "
+     "pasta dele"),
+    ("Options error",
+     "o perfil tem uma diretiva que o openvpn recusou"),
     ("Inactivity timeout",
      "nenhuma resposta do servidor da VPN"),
     ("All connections have been connect-retry-max",
      "nenhuma resposta do servidor da VPN"),
 )
+
+
+def _mesma_rede(destino: str) -> bool:
+    """Se o host do "remote" esta na mesma /24 desta maquina.
+
+    Serve para NAO repetir o aviso de NAT reflection quando ele nao se aplica:
+    num teste via 4G o aviso so desvia a investigacao para o firewall.
+    """
+    host = (destino or "").split()[0] if (destino or "").strip() else ""
+    if not host:
+        return False
+    try:
+        ip_remoto = socket.gethostbyname(host)
+    except Exception:
+        return False
+    try:
+        # connect() em UDP nao envia pacote: so faz o SO escolher a interface
+        # de saida, que e o jeito portatil de descobrir o IP local em uso.
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(2)
+            s.connect((ip_remoto, 1194))
+            ip_local = s.getsockname()[0]
+    except Exception:
+        return False
+    return ip_local.rsplit(".", 1)[0] == ip_remoto.rsplit(".", 1)[0]
 
 
 def causa_rede(linhas: List[str]) -> str:
@@ -400,6 +483,26 @@ def testar_credencial(perfil: Path,
     return resultado, detalhe, linhas
 
 
+def _salvar_log(linhas: List[str]) -> str:
+    """Grava o log do teste em disco e devolve o caminho.
+
+    As ultimas linhas na tela cabem numa olhada, mas nao bastam para
+    investigar: a causa de um handshake que morre costuma estar no inicio do
+    log, que ja rolou para fora.
+    """
+    if not linhas:
+        return ""
+    base = os.environ.get("ProgramData") or os.environ.get("TEMP") or "."
+    try:
+        pasta = Path(base) / "BlueControl"
+        pasta.mkdir(parents=True, exist_ok=True)
+        alvo = pasta / f"vpn-teste-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        alvo.write_text("\n".join(linhas), encoding="utf-8", errors="ignore")
+        return str(alvo)
+    except Exception:
+        return ""
+
+
 # ── Instalação ────────────────────────────────────────────────────────────
 
 def instalar(params: dict) -> None:
@@ -500,10 +603,24 @@ def instalar(params: dict) -> None:
         # da VPN, sem nada ligando o problema ao que foi digitado aqui.
         _progresso(90, "Testando a conexão com a credencial…")
         _log("Conectando para conferir a credencial (até ~1 minuto)…", "muted")
-        destino = destino_perfil(perfis[0])
+        alvo = escolher_perfil(perfis) or perfis[0]
+        faltando = arquivos_faltando(alvo)
+        if faltando:
+            # Nao da para testar credencial com um perfil incompleto: o
+            # openvpn nem chega a falar com o servidor, e o resultado seria
+            # indistinguivel de porta bloqueada.
+            _log(f"O perfil {alvo.name} referencia arquivos que nao estao em "
+                 f"{alvo.parent}: {', '.join(faltando)}", "err")
+            _log("Reinstale a VPN pela aba (o instalador grava o perfil junto "
+                 "com o CA e a chave tls-auth na mesma pasta).", "info")
+            _progresso(100, "Perfil incompleto — credencial nao pode ser testada",
+                       ok=True)
+            return
+
+        destino = destino_perfil(alvo)
         if destino:
-            _log(f"O perfil conecta em: {destino}", "muted")
-        situacao, detalhe, log_vpn = testar_credencial(perfis[0])
+            _log(f"O perfil {alvo.name} conecta em: {destino}", "muted")
+        situacao, detalhe, log_vpn = testar_credencial(alvo)
 
         if situacao == "auth_falhou":
             _log(f"O servidor RECUSOU a credencial de {usuario}: {detalhe}", "err")
@@ -525,18 +642,27 @@ def instalar(params: dict) -> None:
              "rede, não a senha: o OpenVPN só chega a validar usuário e senha "
              "depois do handshake TLS, e aqui ele não passou dessa etapa.",
              "info")
-        if destino:
-            _log(f"Se esta máquina está DENTRO da mesma rede de {destino}, a "
-                 "falha é esperada: o firewall precisa de NAT reflection "
-                 "(hairpin) para aceitar conexão vinda de dentro no próprio "
-                 "endereço externo. Teste de uma rede externa (4G) para "
-                 "confirmar a credencial.", "info")
+        if destino and _mesma_rede(destino):
+            # Condicional de proposito: este aviso aparecia sempre que havia
+            # um destino, inclusive num teste via 4G, onde hairpin nao tem
+            # nada a ver -- e mandava investigar o firewall por nada.
+            _log(f"Esta máquina está na MESMA rede de {destino}: o firewall "
+                 "precisa de NAT reflection (hairpin) para aceitar conexão "
+                 "vinda de dentro no próprio endereço externo. Teste de uma "
+                 "rede externa (4G) para confirmar a credencial.", "info")
         _log("A credencial está gravada e o perfil aponta para ela — não "
              "precisa reinstalar.", "ok")
         # As ultimas linhas do log cruas: sem elas, "nao conectou" nao tem como
         # ser investigado depois sem repetir o teste na maquina do cliente.
-        for linha in [l for l in log_vpn if l.strip()][-8:]:
+        uteis = [l for l in log_vpn if l.strip()]
+        if not uteis:
+            _log("O openvpn.exe não produziu nenhuma saída — ou não chegou a "
+                 "rodar, ou foi encerrado antes de logar.", "warn")
+        for linha in uteis[-12:]:
             _log(f"  openvpn: {linha[:180]}", "muted")
+        destino_log = _salvar_log(uteis)
+        if destino_log:
+            _log(f"Log completo do teste salvo em {destino_log}", "info")
         _progresso(100, "VPN instalada — credencial não pôde ser testada",
                    ok=True)
 

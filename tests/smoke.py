@@ -310,6 +310,42 @@ def main() -> int:
     checar("perfil inexistente nao estoura",
            agente.vpn.destino_perfil(_Path("/nao/existe.ovpn")), "")
 
+    # Perfil incompleto: o export do pfSense aponta "ca" e "tls-auth" por
+    # caminho RELATIVO, resolvido contra a pasta do perfil. Um .ovpn orfao
+    # (em config-auto, no %USERPROFILE%...) morre antes de falar com o
+    # servidor, e isso era indistinguivel de porta bloqueada.
+    _pasta = _Path(_tf.mkdtemp())
+    _real = ("dev tun\nclient\nremote 187.102.159.62 1194 udp4\n"
+             "auth-user-pass\nca saturno-ca.crt\ntls-auth saturno-tls.key 1\n")
+    _orfao = _pasta / "orfao.ovpn"
+    _orfao.write_text(_real, encoding="utf-8")
+    checar("perfil sem CA nem chave e detectado",
+           sorted(agente.vpn.arquivos_faltando(_orfao)),
+           ["saturno-ca.crt", "saturno-tls.key"])
+    _completo_dir = _Path(_tf.mkdtemp())
+    _completo = _completo_dir / "bom.ovpn"
+    _completo.write_text(_real, encoding="utf-8")
+    (_completo_dir / "saturno-ca.crt").write_text("x", encoding="utf-8")
+    (_completo_dir / "saturno-tls.key").write_text("x", encoding="utf-8")
+    checar("perfil completo nao acusa falta",
+           agente.vpn.arquivos_faltando(_completo), [])
+    # A escolha do perfil era perfis[0] as cegas -- o orfao ganhava e a
+    # instalacao falhava com a credencial certa e o servidor no ar.
+    checar("escolhe o perfil completo, nao o primeiro",
+           agente.vpn.escolher_perfil([_orfao, _completo]), _completo)
+    checar("sem perfil completo, devolve o primeiro",
+           agente.vpn.escolher_perfil([_orfao]), _orfao)
+    checar("sem perfil nenhum, devolve None",
+           agente.vpn.escolher_perfil([]), None)
+    # Chave inline nao referencia arquivo: acusar falta ali bloquearia um
+    # perfil perfeitamente valido.
+    _inline = _pasta / "inline.ovpn"
+    _inline.write_text("client\n<ca>\n-----BEGIN-----\n</ca>\n", encoding="utf-8")
+    checar("chave inline nao conta como arquivo faltando",
+           agente.vpn.arquivos_faltando(_inline), [])
+    checar("arquivo que nao abre tem causa propria",
+           "nao esta na pasta" in _cr(["Cannot open file 'x.crt'"]), True)
+
     _st = agente.vpn.status()
     for campo in ("instalado", "perfis", "com_credencial", "instalador", "servico"):
         checar(f"/status da VPN devolve '{campo}'", campo in _st, True)
