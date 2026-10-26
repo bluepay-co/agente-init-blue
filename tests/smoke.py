@@ -180,6 +180,37 @@ def main() -> int:
                                   f" -> {_m.group(1)}")
     checar(f"referências quebradas ({len(_ids)} ids no HTML)", _quebrados, [])
 
+    print("\n[6d] Nenhum módulo usado sem import")
+    # "import shutil" esquecido nao quebra o carregamento: so estoura com
+    # NameError na hora em que a funcao roda -- e aqui isso seria no meio de
+    # uma limpeza de VPN, o pior momento possivel. Ja aconteceu em vpn.py.
+    import builtins as _bi
+    _faltando = []
+    for _f in sorted(_glob.glob(os.path.join(RAIZ, "src", "*.py"))):
+        _arv = __import__("ast").parse(open(_f, encoding="utf-8").read())
+        _ast = __import__("ast")
+        _conhecidos = set(dir(_bi))
+        for _no in _ast.walk(_arv):
+            if isinstance(_no, _ast.Import):
+                for _a in _no.names:
+                    _conhecidos.add((_a.asname or _a.name).split(".")[0])
+            elif isinstance(_no, _ast.ImportFrom):
+                for _a in _no.names:
+                    _conhecidos.add(_a.asname or _a.name)
+            elif isinstance(_no, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+                _conhecidos.add(_no.name)
+            elif isinstance(_no, _ast.Name) and isinstance(_no.ctx, _ast.Store):
+                _conhecidos.add(_no.id)
+            elif isinstance(_no, _ast.arg):
+                _conhecidos.add(_no.arg)
+            elif isinstance(_no, _ast.ExceptHandler) and _no.name:
+                _conhecidos.add(_no.name)
+        for _no in _ast.walk(_arv):
+            if isinstance(_no, _ast.Attribute) and isinstance(_no.value, _ast.Name):
+                if _no.value.id not in _conhecidos:
+                    _faltando.append(f"{os.path.basename(_f)}:{_no.value.id}")
+    checar("modulos usados sem import", sorted(set(_faltando)), [])
+
     print("\n[6c] Toda view do showView está na regra flex do CSS")
     # showView() aplica display:flex. Sem flex-direction:column os cards se
     # alinham em LINHA e a aba vira um amasso horizontal. Ja aconteceu duas

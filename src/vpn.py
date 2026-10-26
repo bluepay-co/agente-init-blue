@@ -17,6 +17,7 @@ importa agente.py; recebe os helpers por init().
 
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -81,17 +82,39 @@ def localizar_instalador() -> Optional[Path]:
     return None
 
 
-def _perfis() -> List[Path]:
-    """Perfis .ovpn instalados. O pfSense grava em <OpenVPN>\\config, mas
-    versões recentes usam config-auto para o que sobe com o serviço."""
+def _dirs_perfil() -> List[Path]:
+    """Todos os lugares onde um .ovpn pode estar.
+
+    Não basta <OpenVPN>\\config: o pfSense grava ali, mas o OpenVPN 2.6+ usa
+    config-auto para o que sobe com o serviço e %USERPROFILE%\\OpenVPN\\config
+    para o perfil do usuário — e era essa última que faltava, deixando a aba
+    dizer "instalado, sem perfil" numa máquina que tinha o perfil.
+    """
+    dirs = []
     d = _dir_openvpn()
-    if not d:
-        return []
+    if d:
+        dirs += [d / "config", d / "config-auto"]
+    perfil_usuario = os.environ.get("USERPROFILE")
+    if perfil_usuario:
+        dirs.append(Path(perfil_usuario) / "OpenVPN" / "config")
+    dados = os.environ.get("ProgramData")
+    if dados:
+        dirs.append(Path(dados) / "OpenVPN" / "config")
+    return [p for p in dirs if p.is_dir()]
+
+
+def _perfis() -> List[Path]:
+    """Perfis .ovpn instalados, em qualquer um dos diretórios conhecidos.
+
+    Recursivo (rglob) porque algumas versões criam uma subpasta por perfil.
+    """
     achados = []
-    for sub in ("config", "config-auto"):
-        p = d / sub
-        if p.is_dir():
-            achados.extend(sorted(p.glob("*.ovpn")))
+    vistos = set()
+    for pasta in _dirs_perfil():
+        for arq in sorted(pasta.rglob("*.ovpn")):
+            if arq not in vistos:
+                vistos.add(arq)
+                achados.append(arq)
     return achados
 
 
@@ -246,15 +269,23 @@ def instalar(params: dict) -> None:
 
             _progresso(20, "Instalando o OpenVPN…")
             _log(f"Executando {instalador.name}", "muted")
-            # O SFX pode abrir a janela do MSI; é esperado e o técnico
-            # acompanha. Sem timeout curto: instalar driver TAP demora.
+            _log("A janela do instalador do OpenVPN vai abrir — conclua nela "
+                 "(Next/Install) e esta aba continua sozinha depois.", "info")
+            # SEM creationflags nem capture_output, de propósito. Este SFX abre
+            # a UI do MSI (o RunProgram embutido não usa /qn), e com
+            # CREATE_NO_WINDOW a janela nascia invisível: ninguém clicava, o
+            # processo ficava esperando até o timeout, o MSI não concluía e o
+            # openvpn-postinstall.exe -- que grava o perfil -- nunca rodava.
+            # Era isso que produzia "carregando infinitamente", "não aparece na
+            # lista de programas" e "sem perfil", tudo ao mesmo tempo.
+            # capture_output também sai: num processo longo e falante, encher o
+            # buffer do pipe trava os dois lados.
             try:
-                r = subprocess.run([str(instalador)], capture_output=True,
-                                   timeout=900, creationflags=_NO_WINDOW)
+                r = subprocess.run([str(instalador)], timeout=1800)
                 if r.returncode != 0:
                     _log(f"O instalador terminou com código {r.returncode}.", "warn")
             except subprocess.TimeoutExpired:
-                _log("O instalador passou de 15 minutos — verifique se ficou "
+                _log("O instalador passou de 30 minutos — verifique se ficou "
                      "aguardando algum clique na tela.", "err")
                 _progresso(100, "Instalação não concluiu", erro=True)
                 return
@@ -384,7 +415,14 @@ def limpar(params: dict) -> None:
 
         _progresso(50, "Desinstalando o OpenVPN…")
         codigos = _codigos_produto()
-        if not codigos:
+        if not codigos and _dir_openvpn():
+            # Pasta sem registro = instalação que começou e não terminou (foi o
+            # que a janela invisível do MSI provocava). Não há o que desinstalar;
+            # o caminho é apagar o que sobrou e instalar de novo.
+            _log("A pasta do OpenVPN existe mas ele não está registrado como "
+                 "programa instalado — sinal de instalação interrompida no meio. "
+                 "Vou apagar o que sobrou para você poder instalar do zero.", "warn")
+        elif not codigos:
             _log("OpenVPN não aparece na lista de programas instalados "
                  "(pode já ter sido removido).", "info")
         for codigo in codigos:
@@ -403,17 +441,27 @@ def limpar(params: dict) -> None:
                 _log(f"A desinstalação de {codigo} passou de 15 minutos.", "err")
 
         _progresso(80, "Removendo o que sobrou…")
-        for d in _DIRS_OPENVPN:
-            for sub in ("config", "config-auto"):
-                alvo = d / sub
-                if not alvo.is_dir():
+        for alvo in _dirs_perfil():
+            for resto in list(alvo.rglob("*.ovpn")) + list(alvo.rglob(_ARQ_CREDENCIAL)):
+                try:
+                    resto.unlink()
+                    _log(f"Removido {resto}", "ok")
+                except Exception as e:
+                    _log(f"Não consegui remover {resto}: {e}", "warn")
+
+        # Sem registro no sistema não há desinstalador: a pasta órfã some aqui,
+        # senão a próxima instalação encontra o diretório e acha que já existe
+        # um OpenVPN válido.
+        if not codigos:
+            for d in _DIRS_OPENVPN:
+                if not d.is_dir():
                     continue
-                for resto in list(alvo.glob("*.ovpn")) + list(alvo.glob(_ARQ_CREDENCIAL)):
-                    try:
-                        resto.unlink()
-                        _log(f"Removido {resto}", "ok")
-                    except Exception as e:
-                        _log(f"Não consegui remover {resto}: {e}", "warn")
+                try:
+                    shutil.rmtree(d)
+                    _log(f"Pasta {d} removida", "ok")
+                except Exception as e:
+                    _log(f"Não consegui remover {d}: {e} — feche o OpenVPN GUI "
+                         "se estiver aberto.", "warn")
 
         if _dir_openvpn():
             _log("A pasta do OpenVPN ainda existe — se a desinstalação pediu "
