@@ -403,7 +403,26 @@
                 <input type="text" id="monCadSerie" placeholder="Opcional">
               </div>
             </div>
-            <p class="hint">O número de patrimônio é gerado automaticamente ao instalar.</p>
+            <div class="field-row">
+              <div class="field">
+                <label>Patrimônio interno</label>
+                <input type="text" id="monCadPatrimonio" placeholder="Deixe vazio p/ gerar">
+              </div>
+              <div class="field">
+                <label>Status</label>
+                <select id="monCadStatus">
+                  <option value="Em Uso">Em Uso</option>
+                  <option value="Em Estoque">Em Estoque</option>
+                  <option value="Manutenção">Manutenção</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label>AnyDesk ID <span class="campo-nota" id="monAnydeskNota" style="display:none;"></span></label>
+              <input type="text" id="monCadAnydesk" placeholder="Detectado ao instalar o AnyDesk">
+            </div>
+            <p class="hint">Patrimônio vazio é gerado automaticamente ao instalar. Preencha só para
+               reaproveitar a etiqueta já colada na máquina.</p>
           </div>
         </div>
 

@@ -67,6 +67,21 @@ async function monCarregarStatus() {
       }
     }
 
+    // AnyDesk ID, mesma regra da série. Fica fora do _monPrefilled de propósito:
+    // numa máquina nova o AnyDesk só é instalado pela aba Setup, então na
+    // primeira visita o ID ainda não existe e aparece quando a aba for reaberta.
+    const ad = document.getElementById('monCadAnydesk');
+    if (d.anydesk_id && ad && !ad.value.trim()) {
+      ad.value = d.anydesk_id;
+      ad.classList.add('auto-detectado');
+      ad.title = 'Lido do AnyDesk instalado nesta máquina.';
+      const notaAd = document.getElementById('monAnydeskNota');
+      if (notaAd) {
+        notaAd.textContent = 'detectado automaticamente';
+        notaAd.style.display = 'inline';
+      }
+    }
+
     if (!d.existe) return;
 
     document.getElementById('monStatusCard').style.display = 'block';
@@ -280,6 +295,10 @@ async function monInstalar() {
         categoria:    document.getElementById('monCadCategoria').value,
         setor:        document.getElementById('monCadSetor').value.trim() || null,
         numero_serie: document.getElementById('monCadSerie').value.trim() || null,
+        // Vazio tem significado: manda null para a API gerar o patrimônio.
+        patrimonio_interno: document.getElementById('monCadPatrimonio').value.trim() || null,
+        status_estoque:     document.getElementById('monCadStatus').value,
+        anydesk_id:         document.getElementById('monCadAnydesk').value.trim() || null,
       });
       // O /buscar devolve "patrimonio_interno"; aceita os dois nomes para não
       // depender de qual deles o cadastro responde.

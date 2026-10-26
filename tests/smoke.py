@@ -146,6 +146,17 @@ def main() -> int:
         checar(f"descarta {lixo!r}", valido(lixo), "")
     checar("/status expõe 'numero_serie'", "numero_serie" in corpo, True)
 
+    print("\n[7b] AnyDesk ID lido da máquina")
+    # O ID é numérico de 9-10 dígitos e o --get-id as vezes devolve agrupado
+    # ("123 456 789"). Lixo aqui vira acesso remoto apontando pra máquina errada.
+    val_ad = agente.monitoramento._anydesk_id_valido
+    checar("aceita ID simples", val_ad("123456789"), "123456789")
+    checar("aceita ID agrupado", val_ad("123 456 789"), "123456789")
+    checar("aceita ID com quebra de linha", val_ad(" 987654321\n"), "987654321")
+    for lixo in ("", "abc", "12", "0" * 20, "Display ID:"):
+        checar(f"descarta {lixo[:14]!r}", val_ad(lixo), "")
+    checar("/status expõe 'anydesk_id'", "anydesk_id" in corpo, True)
+
     print("\n[8] URL da API malformada")
     # A URL vem de um campo que o técnico edita. Antes, uma URL vazia estourava
     # ValueError na montagem do urllib.request.Request -- exceção que não é

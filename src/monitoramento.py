@@ -30,6 +30,8 @@ helpers via init().
 """
 
 import json
+import os
+import re
 import shutil
 import subprocess
 import time
@@ -235,6 +237,71 @@ def serial_maquina() -> str:
     return serial
 
 
+# Caminhos padrão do AnyDesk. O instalador do Setup usa o primeiro (x86 em
+# Windows 64 bits); os outros cobrem instalação manual anterior.
+_ANYDESK_EXES = (
+    r"C:\Program Files (x86)\AnyDesk\AnyDesk.exe",
+    r"C:\Program Files\AnyDesk\AnyDesk.exe",
+)
+_ANYDESK_CONFS = (
+    r"C:\ProgramData\AnyDesk\service.conf",
+    r"C:\ProgramData\AnyDesk\system.conf",
+)
+
+# Diferente da série, o ID pode estar vazio agora e existir daqui a pouco (o
+# serviço ainda está registrando). Por isso só guarda em cache quando achou:
+# um "" em cache impediria a segunda tentativa de dar certo.
+_anydesk_cache: Optional[str] = None
+
+
+def _anydesk_id_valido(valor: str) -> str:
+    """O ID é numérico, de 9 a 10 dígitos. Pode vir formatado como
+    '123 456 789' na saída do --get-id."""
+    limpo = re.sub(r"\D", "", valor or "")
+    return limpo if 8 <= len(limpo) <= 12 else ""
+
+
+def anydesk_id() -> str:
+    """ID do AnyDesk desta máquina, para o acesso remoto a partir do painel.
+
+    Tenta `--get-id` no executável e, se não vier nada, lê o `ad.anynet.id`
+    gravado no service.conf. A segunda via existe porque numa máquina recém
+    instalada o `--get-id` responde vazio até o serviço registrar na rede do
+    AnyDesk, enquanto o arquivo já costuma ter o número.
+    """
+    global _anydesk_cache
+    if _anydesk_cache:
+        return _anydesk_cache
+
+    for exe in _ANYDESK_EXES:
+        if not os.path.exists(exe):
+            continue
+        try:
+            r = subprocess.run([exe, "--get-id"], capture_output=True, text=True,
+                               timeout=15, creationflags=_NO_WINDOW)
+            achado = _anydesk_id_valido((r.stdout or "").strip())
+            if achado:
+                _anydesk_cache = achado
+                return achado
+        except Exception as e:
+            _registrar(f"[monitoramento] AnyDesk --get-id falhou em {exe}: {e}")
+
+    for conf in _ANYDESK_CONFS:
+        try:
+            if not os.path.exists(conf):
+                continue
+            for linha in open(conf, encoding="utf-8", errors="ignore"):
+                if linha.startswith("ad.anynet.id"):
+                    achado = _anydesk_id_valido(linha.split("=", 1)[-1])
+                    if achado:
+                        _anydesk_cache = achado
+                        return achado
+        except Exception as e:
+            _registrar(f"[monitoramento] Falha ao ler {conf}: {e}")
+
+    return ""
+
+
 # ══════════════════════════════════════════════
 #  ESTADO ATUAL DA MÁQUINA
 # ══════════════════════════════════════════════
@@ -277,6 +344,7 @@ def status() -> dict:
         # Preenche o "Nº de série" do cadastro sozinho. Vazio quando a BIOS não
         # traz série utilizável — aí o campo fica livre para digitar da etiqueta.
         "numero_serie": serial_maquina(),
+        "anydesk_id":   anydesk_id(),
         "agentes_disponiveis": {
             AGENTE_EXE: _origem_exe(AGENTE_EXE) is not None,
             REMOTE_EXE: _origem_exe(REMOTE_EXE) is not None,
