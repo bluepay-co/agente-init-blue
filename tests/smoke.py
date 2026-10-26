@@ -248,6 +248,25 @@ def main() -> int:
     checar("GUID valido e aceito pelo filtro", bool(_guid), True)
     checar("nome livre nao passa",
            bool(_re.fullmatch(r"\{[0-9A-Fa-f-]{36}\}", "OpenVPNClient")), False)
+    # Classificacao das linhas do openvpn.exe: e ela que decide se o tecnico
+    # vai ser mandado redigitar uma senha. Um falso "auth_falhou" por queda de
+    # rede manda trocar uma senha que esta certa.
+    _cl = agente.vpn.classificar_linha
+    checar("AUTH_FAILED e recusa",
+           _cl("Mon Oct 26 ... AUTH: Received control message: AUTH_FAILED"), "auth_falhou")
+    checar("authentication failed e recusa",
+           _cl("SENT CONTROL: authentication failed"), "auth_falhou")
+    checar("tunel completo e sucesso",
+           _cl("Initialization Sequence Completed"), "ok")
+    for _neutra in ("TLS: Initial packet from 10.0.0.1",
+                    "Connection refused (WSAECONNREFUSED)",
+                    "TLS Error: TLS handshake failed",
+                    "OpenVPN 2.7.4 starting"):
+        checar(f"segue adiante: {_neutra[:28]!r}", _cl(_neutra), "")
+    # auth-user-pass-verify e OUTRA diretiva: casar com ela faria o status
+    # mentir e a reescrita trocar a linha errada.
+    checar("auth-user-pass-verify nao conta",
+           agente.vpn._linha_auth("client\nauth-user-pass-verify x via-env\n"), None)
     _st = agente.vpn.status()
     for campo in ("instalado", "perfis", "com_credencial", "instalador", "servico"):
         checar(f"/status da VPN devolve '{campo}'", campo in _st, True)

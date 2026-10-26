@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -171,7 +172,11 @@ def _linha_auth(texto: str) -> Optional[str]:
     """
     for linha in texto.splitlines():
         limpa = linha.strip()
-        if limpa.startswith("auth-user-pass") and len(limpa.split(None, 1)) > 1:
+        # Split antes do startswith: "auth-user-pass-verify" é outra diretiva e
+        # passaria por um startswith cru, fazendo o status mentir e o
+        # _apontar_perfil reescrever a linha errada.
+        partes = limpa.split(None, 1)
+        if partes and partes[0] == "auth-user-pass" and len(partes) > 1:
             return limpa
     return None
 
@@ -235,14 +240,101 @@ def _apontar_perfil(perfil: Path, credencial: Path) -> Tuple[bool, str]:
     try:
         texto = perfil.read_text(encoding="utf-8", errors="ignore")
         nova = f'auth-user-pass "{credencial}"'
-        if re.search(r"^\s*auth-user-pass.*$", texto, re.M):
-            texto = re.sub(r"^\s*auth-user-pass.*$", nova, texto, count=1, flags=re.M)
+        # \s ou fim de linha depois do nome: sem isso o padrão casa também com
+        # auth-user-pass-verify e trocaria a diretiva errada.
+        alvo = r"^[ \t]*auth-user-pass(?=[ \t]|$).*$"
+        if re.search(alvo, texto, re.M):
+            texto = re.sub(alvo, nova, texto, count=1, flags=re.M)
         else:
             texto = texto.rstrip() + "\n" + nova + "\n"
         perfil.write_text(texto, encoding="utf-8")
         return True, ""
     except Exception as e:
         return False, str(e)
+
+
+# ── Verificação da credencial ─────────────────────────────────────────────
+
+# O que o openvpn.exe imprime quando a credencial e recusada pelo servidor.
+_MARCAS_AUTH_FALHOU = ("AUTH_FAILED", "auth-failure", "authentication failed")
+_MARCA_SUCESSO = "Initialization Sequence Completed"
+
+
+def classificar_linha(linha: str) -> str:
+    """Classifica uma linha do openvpn.exe: "auth_falhou", "ok" ou "" (segue).
+
+    Separado de testar_credencial para poder ser testado sem OpenVPN instalado
+    — é esta lógica que decide se o técnico vai ser mandado redigitar a senha.
+    """
+    baixa = (linha or "").lower()
+    if any(m.lower() in baixa for m in _MARCAS_AUTH_FALHOU):
+        return "auth_falhou"
+    if _MARCA_SUCESSO in (linha or ""):
+        return "ok"
+    return ""
+
+
+def testar_credencial(perfil: Path, segundos: int = 75) -> Tuple[str, str]:
+    """Conecta de verdade para saber se a credencial funciona.
+
+    Sem isto, uma senha errada passava como instalação bem-sucedida e só
+    aparecia dias depois, quando o colaborador tentasse usar a VPN — e aí sem
+    nada na tela ligando o problema à senha digitada aqui.
+
+    Devolve ("ok" | "auth_falhou" | "indeterminado", detalhe). "indeterminado"
+    é honesto: servidor fora do ar ou porta bloqueada não dizem nada sobre a
+    senha, e tratar isso como erro de credencial mandaria o técnico redigitar
+    uma senha que está certa.
+    """
+    d = _dir_openvpn()
+    exe = (d / "bin" / "openvpn.exe") if d else None
+    if not exe or not exe.exists():
+        return "indeterminado", "openvpn.exe não encontrado para testar"
+
+    try:
+        proc = subprocess.Popen(
+            [str(exe), "--config", perfil.name, "--verb", "3",
+             "--connect-retry-max", "1"],
+            cwd=str(perfil.parent), stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, errors="ignore",
+            creationflags=_NO_WINDOW)
+    except Exception as e:
+        return "indeterminado", f"não consegui executar o openvpn.exe: {e}"
+
+    resultado, detalhe = ["indeterminado", "o teste não concluiu a tempo"]
+    linhas: List[str] = []
+
+    def ler():
+        nonlocal resultado, detalhe
+        for linha in proc.stdout:
+            linhas.append(linha.rstrip())
+            veredito = classificar_linha(linha)
+            if veredito == "auth_falhou":
+                resultado, detalhe = veredito, linha.strip()
+                return
+            if veredito == "ok":
+                resultado, detalhe = veredito, "túnel estabelecido"
+                return
+
+    # Thread: o openvpn fica conectado quando dá certo, então esperar o
+    # processo terminar travaria aqui para sempre.
+    leitor = threading.Thread(target=ler, daemon=True)
+    leitor.start()
+    leitor.join(timeout=segundos)
+
+    try:
+        proc.terminate()
+        proc.wait(timeout=10)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    if resultado == "indeterminado" and linhas:
+        # Última linha útil ajuda a distinguir rede de credencial no log.
+        detalhe = linhas[-1][:200]
+    return resultado, detalhe
 
 
 # ── Instalação ────────────────────────────────────────────────────────────
@@ -333,15 +425,41 @@ def instalar(params: dict) -> None:
             _log(f"{perfil.name} configurado para o usuário {usuario}", "ok")
 
         if falhas:
-            _progresso(100, "VPN instalada, mas a credencial falhou", erro=True)
+            _progresso(100, "VPN instalada, mas a credencial não foi gravada",
+                       erro=True)
             return
 
         _registrar(f"[vpn] credencial gravada para o usuario {usuario} em "
                    f"{len(perfis)} perfil(is)")
-        _log("A VPN conecta sem pedir senha. Para subir junto com o Windows, "
-             "deixe o perfil em config-auto e o serviço OpenVPNService em "
-             "automático.", "info")
-        _progresso(100, "VPN pronta!", ok=True)
+
+        # Gravar não é o mesmo que funcionar. Conecta de verdade: senha errada
+        # passaria como sucesso e só apareceria quando o colaborador precisasse
+        # da VPN, sem nada ligando o problema ao que foi digitado aqui.
+        _progresso(90, "Testando a conexão com a credencial…")
+        _log("Conectando para conferir a credencial (até ~1 minuto)…", "muted")
+        situacao, detalhe = testar_credencial(perfis[0])
+
+        if situacao == "auth_falhou":
+            _log(f"O servidor RECUSOU a credencial de {usuario}: {detalhe}", "err")
+            _log("Confira usuário e senha e instale de novo — a aba sobrescreve "
+                 "a credencial gravada.", "info")
+            _progresso(100, "Credencial recusada pelo servidor da VPN", erro=True)
+            return
+
+        if situacao == "ok":
+            _log(f"Credencial de {usuario} aceita — o túnel subiu e foi "
+                 "encerrado.", "ok")
+            _progresso(100, "VPN pronta e credencial confirmada!", ok=True)
+            return
+
+        # Indeterminado: não dá para afirmar que a senha está errada, e mandar
+        # redigitar uma senha correta é pior do que avisar o que houve.
+        _log(f"Não consegui confirmar a credencial: {detalhe}", "warn")
+        _log("Isso costuma ser rede (servidor fora do ar, porta bloqueada), "
+             "não a senha. A credencial está gravada; teste conectando pelo "
+             "OpenVPN GUI.", "info")
+        _progresso(100, "VPN instalada — credencial não pôde ser testada",
+                   ok=True)
 
     except Exception as e:
         _log(f"Erro inesperado: {e}", "err")
