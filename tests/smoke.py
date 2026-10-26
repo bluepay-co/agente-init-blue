@@ -267,6 +267,24 @@ def main() -> int:
     # mentir e a reescrita trocar a linha errada.
     checar("auth-user-pass-verify nao conta",
            agente.vpn._linha_auth("client\nauth-user-pass-verify x via-env\n"), None)
+    # Apontar o perfil para a credencial passa por re.sub, que interpreta
+    # escapes no texto de troca. O caminho real e "C:\\Program Files\\OpenVPN\\
+    # config\\...", onde \\P nao e escape valido: isso estourava "bad escape \\p
+    # at position 18" e deixava a credencial gravada mas nunca usada.
+    import tempfile as _tf
+    from pathlib import Path as _Path
+    _perfil = _Path(_tf.mkdtemp()) / "saturno-UDP4-1194-config.ovpn"
+    _perfil.write_text("client\ndev tun\nauth-user-pass\nremote vpn 1194\n",
+                       encoding="utf-8")
+    _cred = _Path(r"C:\Program Files\OpenVPN\config\bluecontrol-auth.txt")
+    _ok, _erro = agente.vpn._apontar_perfil(_perfil, _cred)
+    checar("aponta perfil com caminho que tem \\P", (_ok, _erro), (True, ""))
+    _texto = _perfil.read_text(encoding="utf-8")
+    checar("caminho sai literal no perfil", str(_cred) in _texto, True)
+    checar("perfil apontado e reconhecido depois",
+           bool(agente.vpn._linha_auth(_texto)), True)
+    checar("nao duplicou a diretiva", _texto.count("auth-user-pass"), 1)
+
     _st = agente.vpn.status()
     for campo in ("instalado", "perfis", "com_credencial", "instalador", "servico"):
         checar(f"/status da VPN devolve '{campo}'", campo in _st, True)

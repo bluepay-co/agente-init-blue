@@ -244,7 +244,11 @@ def _apontar_perfil(perfil: Path, credencial: Path) -> Tuple[bool, str]:
         # auth-user-pass-verify e trocaria a diretiva errada.
         alvo = r"^[ \t]*auth-user-pass(?=[ \t]|$).*$"
         if re.search(alvo, texto, re.M):
-            texto = re.sub(alvo, nova, texto, count=1, flags=re.M)
+            # Substituição por FUNÇÃO, não por string: re.sub interpreta
+            # escapes no texto de troca, e o caminho do Windows traz
+            # "C:\Program Files", onde \P não é escape válido e estoura
+            # "bad escape \p at position 18". Uma função devolve o literal.
+            texto = re.sub(alvo, lambda _m: nova, texto, count=1, flags=re.M)
         else:
             texto = texto.rstrip() + "\n" + nova + "\n"
         perfil.write_text(texto, encoding="utf-8")
