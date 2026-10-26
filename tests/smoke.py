@@ -285,6 +285,31 @@ def main() -> int:
            bool(agente.vpn._linha_auth(_texto)), True)
     checar("nao duplicou a diretiva", _texto.count("auth-user-pass"), 1)
 
+    # Falha de rede nao e falha de senha: o openvpn so valida a credencial
+    # DEPOIS do handshake TLS. Classificar errado manda o tecnico redigitar
+    # uma senha correta, que foi o que aconteceu no teste dentro da LAN.
+    _cr = agente.vpn.causa_rede
+    checar("handshake TLS vazio aponta porta/hairpin",
+           "hairpin" in _cr(["TLS Error: TLS key negotiation failed to occur"]), True)
+    checar("connection refused tem causa propria",
+           "recusando a porta" in _cr(["Connection refused (WSAECONNREFUSED)"]), True)
+    checar("DNS que nao resolve e identificado",
+           "DNS" in _cr(["RESOLVE: Cannot resolve host address: vpn.x"]), True)
+    checar("log sem causa conhecida nao inventa",
+           _cr(["OpenVPN 2.7.4 starting", "TLS: Initial packet"]), "")
+    checar("AUTH_FAILED nao vira causa de rede", _cr(["AUTH_FAILED"]), "")
+    # O destino e o que distingue "senha errada" de "estou na rede do proprio
+    # firewall": sem ele o log diz que falhou, mas nao contra o que.
+    _pd = _Path(_tf.mkdtemp()) / "p.ovpn"
+    _pd.write_text("client\nremote vpn.exemplo.com.br 1194 udp4\nauth-user-pass\n",
+                   encoding="utf-8")
+    checar("le o remote do perfil",
+           agente.vpn.destino_perfil(_pd), "vpn.exemplo.com.br 1194 udp4")
+    _pd.write_text("client\nremote-random\nauth-user-pass\n", encoding="utf-8")
+    checar("remote-random nao e remote", agente.vpn.destino_perfil(_pd), "")
+    checar("perfil inexistente nao estoura",
+           agente.vpn.destino_perfil(_Path("/nao/existe.ovpn")), "")
+
     _st = agente.vpn.status()
     for campo in ("instalado", "perfis", "com_credencial", "instalador", "servico"):
         checar(f"/status da VPN devolve '{campo}'", campo in _st, True)

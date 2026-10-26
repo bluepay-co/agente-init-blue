@@ -264,6 +264,63 @@ _MARCAS_AUTH_FALHOU = ("AUTH_FAILED", "auth-failure", "authentication failed")
 _MARCA_SUCESSO = "Initialization Sequence Completed"
 
 
+# Causas de rede que o openvpn relata, em portugues claro. Sem isto a aba
+# devolvia uma linha crua do log e o tecnico nao tinha o que fazer com ela:
+# "nao conectou" nao diz se o servidor esta fora, se a porta esta fechada ou
+# se o nome nem resolveu -- e sao acoes completamente diferentes.
+_CAUSAS_REDE = (
+    ("RESOLVE: Cannot resolve host",
+     "o nome do servidor da VPN nao resolveu em DNS"),
+    ("Could not determine IPv4/IPv6 protocol",
+     "o nome do servidor da VPN nao resolveu em DNS"),
+    ("Connection refused",
+     "o servidor respondeu recusando a porta (servico da VPN parado?)"),
+    ("No Route to Host",
+     "sem rota ate o servidor da VPN"),
+    ("Network is unreachable",
+     "sem rota ate o servidor da VPN"),
+    ("TLS Error: TLS key negotiation failed",
+     "nada respondeu na porta da VPN dentro do tempo "
+     "(porta bloqueada no caminho, ou -- se esta maquina esta DENTRO da rede "
+     "do proprio servidor -- falta NAT reflection/hairpin no firewall)"),
+    ("TLS handshake failed",
+     "nada respondeu na porta da VPN dentro do tempo "
+     "(porta bloqueada no caminho, ou -- se esta maquina esta DENTRO da rede "
+     "do proprio servidor -- falta NAT reflection/hairpin no firewall)"),
+    ("Inactivity timeout",
+     "nenhuma resposta do servidor da VPN"),
+    ("All connections have been connect-retry-max",
+     "nenhuma resposta do servidor da VPN"),
+)
+
+
+def causa_rede(linhas: List[str]) -> str:
+    """Traduz o log do openvpn.exe na causa de rede, se houver uma conhecida."""
+    for linha in linhas:
+        for marca, causa in _CAUSAS_REDE:
+            if marca.lower() in (linha or "").lower():
+                return causa
+    return ""
+
+
+def destino_perfil(perfil: Path) -> str:
+    """O "remote host porta [proto]" do .ovpn, para dizer o que foi tentado.
+
+    Sem isto o log diz que falhou mas nao contra o que: se o perfil aponta
+    para um nome publico e a maquina esta na LAN do proprio firewall, a falha
+    e esperada e nao tem nada a ver com a credencial.
+    """
+    try:
+        texto = perfil.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+    for linha in texto.splitlines():
+        partes = linha.strip().split()
+        if partes and partes[0] == "remote" and len(partes) > 1:
+            return " ".join(partes[1:])
+    return ""
+
+
 def classificar_linha(linha: str) -> str:
     """Classifica uma linha do openvpn.exe: "auth_falhou", "ok" ou "" (segue).
 
@@ -278,14 +335,16 @@ def classificar_linha(linha: str) -> str:
     return ""
 
 
-def testar_credencial(perfil: Path, segundos: int = 75) -> Tuple[str, str]:
+def testar_credencial(perfil: Path,
+                      segundos: int = 75) -> Tuple[str, str, List[str]]:
     """Conecta de verdade para saber se a credencial funciona.
 
     Sem isto, uma senha errada passava como instalação bem-sucedida e só
     aparecia dias depois, quando o colaborador tentasse usar a VPN — e aí sem
     nada na tela ligando o problema à senha digitada aqui.
 
-    Devolve ("ok" | "auth_falhou" | "indeterminado", detalhe). "indeterminado"
+    Devolve ("ok" | "auth_falhou" | "indeterminado", detalhe, linhas_do_log).
+    "indeterminado"
     é honesto: servidor fora do ar ou porta bloqueada não dizem nada sobre a
     senha, e tratar isso como erro de credencial mandaria o técnico redigitar
     uma senha que está certa.
@@ -293,7 +352,7 @@ def testar_credencial(perfil: Path, segundos: int = 75) -> Tuple[str, str]:
     d = _dir_openvpn()
     exe = (d / "bin" / "openvpn.exe") if d else None
     if not exe or not exe.exists():
-        return "indeterminado", "openvpn.exe não encontrado para testar"
+        return "indeterminado", "openvpn.exe não encontrado para testar", []
 
     try:
         proc = subprocess.Popen(
@@ -303,7 +362,7 @@ def testar_credencial(perfil: Path, segundos: int = 75) -> Tuple[str, str]:
             stderr=subprocess.STDOUT, text=True, errors="ignore",
             creationflags=_NO_WINDOW)
     except Exception as e:
-        return "indeterminado", f"não consegui executar o openvpn.exe: {e}"
+        return "indeterminado", f"não consegui executar o openvpn.exe: {e}", []
 
     resultado, detalhe = ["indeterminado", "o teste não concluiu a tempo"]
     linhas: List[str] = []
@@ -336,9 +395,9 @@ def testar_credencial(perfil: Path, segundos: int = 75) -> Tuple[str, str]:
             pass
 
     if resultado == "indeterminado" and linhas:
-        # Última linha útil ajuda a distinguir rede de credencial no log.
-        detalhe = linhas[-1][:200]
-    return resultado, detalhe
+        # Causa conhecida primeiro; a última linha é o fallback honesto.
+        detalhe = causa_rede(linhas) or linhas[-1][:200]
+    return resultado, detalhe, linhas
 
 
 # ── Instalação ────────────────────────────────────────────────────────────
@@ -441,7 +500,10 @@ def instalar(params: dict) -> None:
         # da VPN, sem nada ligando o problema ao que foi digitado aqui.
         _progresso(90, "Testando a conexão com a credencial…")
         _log("Conectando para conferir a credencial (até ~1 minuto)…", "muted")
-        situacao, detalhe = testar_credencial(perfis[0])
+        destino = destino_perfil(perfis[0])
+        if destino:
+            _log(f"O perfil conecta em: {destino}", "muted")
+        situacao, detalhe, log_vpn = testar_credencial(perfis[0])
 
         if situacao == "auth_falhou":
             _log(f"O servidor RECUSOU a credencial de {usuario}: {detalhe}", "err")
@@ -459,9 +521,22 @@ def instalar(params: dict) -> None:
         # Indeterminado: não dá para afirmar que a senha está errada, e mandar
         # redigitar uma senha correta é pior do que avisar o que houve.
         _log(f"Não consegui confirmar a credencial: {detalhe}", "warn")
-        _log("Isso costuma ser rede (servidor fora do ar, porta bloqueada), "
-             "não a senha. A credencial está gravada; teste conectando pelo "
-             "OpenVPN GUI.", "info")
+        _log("O servidor não recusou a credencial — ele não respondeu. Isso é "
+             "rede, não a senha: o OpenVPN só chega a validar usuário e senha "
+             "depois do handshake TLS, e aqui ele não passou dessa etapa.",
+             "info")
+        if destino:
+            _log(f"Se esta máquina está DENTRO da mesma rede de {destino}, a "
+                 "falha é esperada: o firewall precisa de NAT reflection "
+                 "(hairpin) para aceitar conexão vinda de dentro no próprio "
+                 "endereço externo. Teste de uma rede externa (4G) para "
+                 "confirmar a credencial.", "info")
+        _log("A credencial está gravada e o perfil aponta para ela — não "
+             "precisa reinstalar.", "ok")
+        # As ultimas linhas do log cruas: sem elas, "nao conectou" nao tem como
+        # ser investigado depois sem repetir o teste na maquina do cliente.
+        for linha in [l for l in log_vpn if l.strip()][-8:]:
+            _log(f"  openvpn: {linha[:180]}", "muted")
         _progresso(100, "VPN instalada — credencial não pôde ser testada",
                    ok=True)
 
