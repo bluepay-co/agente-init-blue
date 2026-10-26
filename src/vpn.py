@@ -277,6 +277,23 @@ def _gravar_credencial(perfil: Path, usuario: str, senha: str) -> Tuple[bool, st
     return True, str(destino)
 
 
+def _caminho_ovpn(caminho: Path) -> str:
+    """Caminho do Windows como o OpenVPN exige dentro de um .ovpn.
+
+    O proprio openvpn trata "\\" como escape de shell ao ler o arquivo de
+    configuracao e recusa o perfil inteiro:
+
+        Options warning: Bad backslash ('\\') usage in ...ovpn:12: remember
+        that backslashes are treated as shell-escapes ... you should use
+        double backslashes such as "c:\\\\openvpn\\\\static.key"
+
+    Ele sai na hora, antes de abrir socket -- nenhuma linha de rede no log, o
+    que fazia a falha parecer servidor sem resposta. Barra normal e aceita no
+    Windows e nao tem escape nenhum para dar errado, entao e o que gravamos.
+    """
+    return str(caminho).replace("\\", "/")
+
+
 def _apontar_perfil(perfil: Path, credencial: Path) -> Tuple[bool, str]:
     """Troca o `auth-user-pass` do perfil para apontar ao arquivo.
 
@@ -286,7 +303,7 @@ def _apontar_perfil(perfil: Path, credencial: Path) -> Tuple[bool, str]:
     """
     try:
         texto = perfil.read_text(encoding="utf-8", errors="ignore")
-        nova = f'auth-user-pass "{credencial}"'
+        nova = f'auth-user-pass "{_caminho_ovpn(credencial)}"'
         # \s ou fim de linha depois do nome: sem isso o padrão casa também com
         # auth-user-pass-verify e trocaria a diretiva errada.
         alvo = r"^[ \t]*auth-user-pass(?=[ \t]|$).*$"
@@ -343,6 +360,9 @@ _CAUSAS_REDE = (
     ("No such file or directory",
      "o perfil referencia um arquivo (CA, chave tls-auth) que nao esta na "
      "pasta dele"),
+    ("Bad backslash",
+     "o perfil tem um caminho do Windows com barra invertida simples, que o "
+     "openvpn trata como escape e recusa"),
     ("Options error",
      "o perfil tem uma diretiva que o openvpn recusou"),
     ("Inactivity timeout",

@@ -280,7 +280,10 @@ def main() -> int:
     _ok, _erro = agente.vpn._apontar_perfil(_perfil, _cred)
     checar("aponta perfil com caminho que tem \\P", (_ok, _erro), (True, ""))
     _texto = _perfil.read_text(encoding="utf-8")
-    checar("caminho sai literal no perfil", str(_cred) in _texto, True)
+    # Literal quanto ao conteudo, com a barra convertida: o escape do re.sub
+    # era um bug, e a barra invertida crua era outro -- os dois na mesma linha.
+    checar("caminho sai no perfil, com barra normal",
+           agente.vpn._caminho_ovpn(_cred) in _texto, True)
     checar("perfil apontado e reconhecido depois",
            bool(agente.vpn._linha_auth(_texto)), True)
     checar("nao duplicou a diretiva", _texto.count("auth-user-pass"), 1)
@@ -345,6 +348,28 @@ def main() -> int:
            agente.vpn.arquivos_faltando(_inline), [])
     checar("arquivo que nao abre tem causa propria",
            "nao esta na pasta" in _cr(["Cannot open file 'x.crt'"]), True)
+
+    # O openvpn trata "\\" como escape de shell DENTRO do .ovpn e recusa o
+    # perfil inteiro ("Bad backslash usage ...:12"), saindo antes de abrir
+    # socket -- nenhuma linha de rede no log, o que fazia a falha parecer
+    # servidor sem resposta. Verificado contra o servidor real: com barra
+    # normal o handshake completa e a credencial e lida do arquivo.
+    _co = agente.vpn._caminho_ovpn
+    checar("barra invertida nao sobrevive na diretiva",
+           "\\" in _co(_Path(r"C:\Program Files\OpenVPN\config\a.txt")), False)
+    checar("caminho sai com barra normal",
+           _co(_Path(r"C:\Program Files\OpenVPN\config\a.txt")),
+           "C:/Program Files/OpenVPN/config/a.txt")
+    _pb = _Path(_tf.mkdtemp()) / "b.ovpn"
+    _pb.write_text("client\nauth-user-pass\n", encoding="utf-8")
+    agente.vpn._apontar_perfil(_pb, _Path(r"C:\Program Files\OpenVPN\cred.txt"))
+    _lb = _pb.read_text(encoding="utf-8")
+    checar("perfil gravado nao tem barra invertida", "\\" in _lb, False)
+    checar("perfil gravado ainda e reconhecido",
+           bool(agente.vpn._linha_auth(_lb)), True)
+    checar("Bad backslash tem causa propria",
+           "barra invertida" in _cr(["Options warning: Bad backslash usage in x.ovpn:12"]),
+           True)
 
     _st = agente.vpn.status()
     for campo in ("instalado", "perfis", "com_credencial", "instalador", "servico"):
