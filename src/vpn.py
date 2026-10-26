@@ -151,6 +151,33 @@ def escolher_perfil(perfis: List[Path]) -> Optional[Path]:
     return perfis[0] if perfis else None
 
 
+# Nome que aparece no OpenVPN GUI. O export do pfSense nomeia o arquivo com
+# servidor+protocolo+porta ("saturno-UDP4-1194-config.ovpn"), que e o que o
+# colaborador ve na bandeja. Trocar o nome do ARQUIVO .ovpn basta: as
+# diretivas ca/tls-auth apontam para os outros arquivos pelos nomes deles,
+# que nao mudam.
+NOME_AMIGAVEL = "BluePay VPN"
+
+
+def renomear_perfil(perfil: Path, nome: str = NOME_AMIGAVEL) -> Tuple[Path, str]:
+    """Renomeia o .ovpn para o nome que o usuario ve. Devolve (perfil, aviso).
+
+    Nunca sobrescreve: se o destino existe, fica com o nome atual. Falhar aqui
+    e cosmetico -- a VPN funciona com qualquer nome -- entao o erro vira aviso
+    e a instalacao segue.
+    """
+    alvo = perfil.with_name(f"{nome}.ovpn")
+    if alvo == perfil:
+        return perfil, ""
+    if alvo.exists():
+        return perfil, ""
+    try:
+        perfil.rename(alvo)
+        return alvo, ""
+    except Exception as e:
+        return perfil, f"não consegui renomear {perfil.name}: {e}"
+
+
 def _perfis() -> List[Path]:
     """Perfis .ovpn instalados, em qualquer um dos diretórios conhecidos.
 
@@ -593,6 +620,19 @@ def instalar(params: dict) -> None:
             _progresso(100, "Perfil não encontrado", erro=True)
             return
         _log(f"Perfil encontrado: {', '.join(p.name for p in perfis)}", "ok")
+
+        # Renomear antes de gravar a credencial: o caminho do perfil muda, e
+        # apontar a credencial no arquivo antigo deixaria o novo sem ela.
+        renomeados = []
+        for perfil in perfis:
+            novo_perfil, aviso = renomear_perfil(perfil)
+            if aviso:
+                _log(aviso, "warn")
+            renomeados.append(novo_perfil)
+        if renomeados != perfis:
+            _log(f"Perfil renomeado para \"{NOME_AMIGAVEL}\" — é esse nome que "
+                 "aparece no OpenVPN GUI.", "ok")
+        perfis = renomeados
 
         _progresso(80, "Gravando a credencial…")
         falhas = 0

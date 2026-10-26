@@ -371,6 +371,30 @@ def main() -> int:
            "barra invertida" in _cr(["Options warning: Bad backslash usage in x.ovpn:12"]),
            True)
 
+    # O nome do ARQUIVO .ovpn e o que o colaborador ve no OpenVPN GUI. O
+    # export do pfSense gera "saturno-UDP4-1194-config.ovpn"; renomear o
+    # arquivo basta, porque ca/tls-auth apontam para os outros arquivos pelos
+    # nomes deles. Renomear DEPOIS de gravar a credencial deixaria o perfil
+    # novo sem ela, entao a ordem importa.
+    _rd = _Path(_tf.mkdtemp())
+    _orig = _rd / "saturno-UDP4-1194-config.ovpn"
+    _orig.write_text("client\nca saturno-ca.crt\n", encoding="utf-8")
+    _novo, _av = agente.vpn.renomear_perfil(_orig)
+    checar("renomeia para o nome amigavel",
+           _novo.name, agente.vpn.NOME_AMIGAVEL + ".ovpn")
+    checar("renomear nao avisa erro", _av, "")
+    checar("o arquivo antigo sai do caminho", _orig.exists(), False)
+    checar("conteudo preservado", "ca saturno-ca.crt" in _novo.read_text(), True)
+    # Idempotente: reinstalar nao pode falhar nem duplicar.
+    _novo2, _av2 = agente.vpn.renomear_perfil(_novo)
+    checar("renomear de novo e inofensivo", (_novo2, _av2), (_novo, ""))
+    # Nunca sobrescreve um perfil que ja existe com esse nome.
+    _outro = _rd / "outro.ovpn"
+    _outro.write_text("client\n", encoding="utf-8")
+    _r3, _av3 = agente.vpn.renomear_perfil(_outro)
+    checar("nao sobrescreve perfil existente", _r3, _outro)
+    checar("perfil existente segue intacto", _novo.exists(), True)
+
     _st = agente.vpn.status()
     for campo in ("instalado", "perfis", "com_credencial", "instalador", "servico"):
         checar(f"/status da VPN devolve '{campo}'", campo in _st, True)
