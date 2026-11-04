@@ -1,0 +1,1608 @@
+"""
+agente.py — Agente Blue
+=======================
+Automação Windows sem dependências externas.
+
+Arquitetura:
+  - Servidor HTTP local (stdlib) serve a interface de web/
+  - Server-Sent Events (SSE) enviam logs em tempo real ao browser
+  - Edge/Chrome abre em modo --app (janela limpa, sem abas)
+
+Layout de pastas (idêntico no repositório e ao lado do .exe):
+  src/         código Python (este arquivo, usuarios.py, programas.py)
+  web/         interface (index.html, style.css, *.js)
+  assets/      ícone e "Fundo de Tela.*"
+  installers/  instaladores locais usados pela etapa de softwares
+  config.json  configuração com as credenciais (NÃO versionado)
+
+Ordem de execução ao clicar em Executar:
+  1. Instalação de softwares (com progresso individual)
+  2. Papel de parede
+  3. Configuração de Descoberta de Rede (firewall + serviços)
+  4. Configuração SMB (desativar assinatura)
+  5. Criação/atualização de usuários locais
+  6. Otimização do Windows
+  7. Verificação de integridade (SFC / DISM)
+"""
+
+import ctypes
+import http.server
+import json
+import logging
+import os
+import queue
+import secrets
+import shutil
+import socket
+import socketserver
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.parse
+import urllib.request
+import webbrowser
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, List
+
+import usuarios  # módulo local: painel Gerenciar Usuários
+import programas  # módulo local: desinstalador em lote
+import monitoramento  # módulo local: cadastro e agente do BlueControl IT
+import vpn  # módulo local: instalação da VPN (OpenVPN)
+from version import __version__
+
+# ─────────────────────────────────────────────
+#  CAMINHOS
+# ─────────────────────────────────────────────
+# _BASE_DIR: raiz externa e editável (pasta do .exe, ou do repositório em dev).
+# _BUNDLE_DIR: cópia embutida no executável, usada como fallback.
+if getattr(sys, "frozen", False):
+    _BASE_DIR = Path(sys.executable).resolve().parent
+    _BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", _BASE_DIR))
+else:
+    _BASE_DIR = Path(__file__).resolve().parent.parent
+    _BUNDLE_DIR = _BASE_DIR
+
+_WEB_DIR = _BASE_DIR / "web"            # interface servida pelo HTTP local
+_EXE_DIR = _BASE_DIR / "installers"     # instaladores locais (Chrome, Office, …)
+# O ícone e o wallpaper ficam em assets/ e são buscados via _resolver().
+
+
+def _resolver(rel: str) -> Optional[Path]:
+    """Procura um arquivo/pasta relativo primeiro na raiz externa (editável sem
+    recompilar) e depois na cópia embutida no executável. None se não existir."""
+    for raiz in (_BASE_DIR, _BUNDLE_DIR):
+        cand = raiz / rel
+        if cand.exists():
+            return cand
+    return None
+
+# ─────────────────────────────────────────────
+#  CONFIGURAÇÃO EXTERNA (config.json)
+#    Credenciais, usuários e softwares ficam fora do código e, por padrão,
+#    fora do .exe: o técnico ajusta tudo sem recompilar.
+# ─────────────────────────────────────────────
+
+def _boot_print(msg: str) -> None:
+    # Antes do logging estar pronto. Sem console (app windowed) sys.stdout é
+    # None — nesse caso, silencia para não quebrar o app.
+    if sys.stdout is not None:
+        try:
+            print(msg)
+        except Exception:
+            pass
+
+
+def _load_config() -> dict:
+    cand = _resolver("config.json")
+    if cand:
+        try:
+            with open(cand, "r", encoding="utf-8-sig") as fh:
+                cfg = json.load(fh)
+            _boot_print(f"[config] Carregado de: {cand}")
+            return cfg
+        except Exception as exc:
+            _boot_print(f"[config] Falha ao ler {cand}: {exc}")
+    _boot_print(f"[config] config.json não encontrado em {_BASE_DIR} — "
+                "copie config.example.json para config.json e preencha as senhas.")
+    return {}
+
+
+_CONFIG: dict = _load_config()
+
+# ─────────────────────────────────────────────
+#  CREDENCIAIS DE ADMINISTRADOR (de config.json)
+# ─────────────────────────────────────────────
+_admin_cfg: dict = _CONFIG.get("admin", {})
+_ADMIN_USER: str = _admin_cfg.get("usuario", r".\Administrator")
+_ADMIN_PASS: str = _admin_cfg.get("senha", "")
+
+# A chave "usuarios" do config.json deixou de existir: o setup não cria mais
+# contas locais sozinho (ver run_automation). Contas são criadas sob demanda na
+# aba Usuários. A chave continua sendo lida aqui por um motivo só — mascarar as
+# senhas no log de quem ainda tiver um config.json antigo em disco.
+_USUARIOS_LEGADO: List[dict] = _CONFIG.get("usuarios", [])
+
+# ─────────────────────────────────────────────
+#  VERIFICAÇÃO DE INTEGRIDADE (de config.json)
+# ─────────────────────────────────────────────
+INTEGRIDADE: dict = _CONFIG.get("integridade", {"habilitar": True})
+
+# Log em local FIXO e legível por qualquer usuário (não depende do %TEMP% do
+# Administrador, que muda ao elevar). Facilita o diagnóstico.
+try:
+    _LOG_DIR = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    _LOG_DIR = Path(os.environ.get("TEMP", r"C:\Temp"))
+_LOG_FILE = _LOG_DIR / "agente_blue.log"
+
+# Wallpaper: procura "Fundo de Tela.*" em assets/ (externo ou embutido)
+_WALLPAPER_NAMES = [
+    "Fundo de Tela.jpg", "Fundo de Tela.jpeg",
+    "Fundo de Tela.png", "Fundo de Tela.bmp",
+]
+
+# ─────────────────────────────────────────────
+#  SUPRESSÃO DE JANELAS DE CONSOLE
+#  CREATE_NO_WINDOW evita que cmd/powershell/schtasks/instaladores piscem
+#  janelas de console quando o agente roda como app sem console (GUI).
+# ─────────────────────────────────────────────
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+# ─────────────────────────────────────────────
+#  LOG
+# ─────────────────────────────────────────────
+# Quando compilado SEM console (windowed), sys.stdout é None — nesse caso só
+# registramos em arquivo; com console, também ecoa no terminal.
+_log_handlers: list = [logging.FileHandler(_LOG_FILE, encoding="utf-8")]
+if sys.stdout is not None:
+    _log_handlers.insert(0, logging.StreamHandler(sys.stdout))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%H:%M:%S",
+    handlers=_log_handlers,
+)
+log = logging.getLogger("agente-blue")
+
+# ─────────────────────────────────────────────
+#  CATÁLOGO DE SOFTWARES
+#    metodo="local" → usa executável da pasta installers/ ao lado do agente
+#    metodo="url"   → baixa o instalador e roda silencioso (fallback)
+#  Todos os instaladores agora vêm da pasta installers/ (sem winget).
+#  nome     : deve bater com data-sw do index.html
+#  filename : nome exato do arquivo dentro de installers/
+#  detect   : caminho que indica instalação já existente (pula)
+#  ok_codes : códigos de saída tratados como sucesso (padrão {0})
+# ─────────────────────────────────────────────
+def _normalizar_softwares(lista: List[dict]) -> List[dict]:
+    """Converte os softwares do config.json para o formato interno.
+    ok_codes vem como lista JSON ([0, 3010]) e precisa virar set ({0, 3010})."""
+    out: List[dict] = []
+    for app in lista:
+        app = dict(app)  # cópia rasa para não mutar o config original
+        codes = app.get("ok_codes", [0])
+        app["ok_codes"] = set(codes) if isinstance(codes, (list, set, tuple)) else {0}
+        out.append(app)
+    return out
+
+
+SOFTWARES: List[dict] = _normalizar_softwares(_CONFIG.get("softwares", []))
+
+# ─────────────────────────────────────────────
+#  TOKEN DA API
+#    O agente roda como Administrador e expõe rotas que criam usuários e
+#    desinstalam programas. Sem token, qualquer página aberta no navegador da
+#    máquina poderia chamá-las. O token é sorteado a cada execução, vive só em
+#    memória e chega à janela pela URL de abertura.
+# ─────────────────────────────────────────────
+_API_TOKEN: str = secrets.token_urlsafe(32)
+
+# ─────────────────────────────────────────────
+#  FILA SSE
+# ─────────────────────────────────────────────
+_sse_queues: List[queue.Queue] = []
+_sse_lock = threading.Lock()
+
+
+def _broadcast(event: dict):
+    with _sse_lock:
+        for q in _sse_queues:
+            q.put(event)
+
+
+# ══════════════════════════════════════════════
+#  SERVIDOR HTTP
+# ══════════════════════════════════════════════
+
+class AgenteHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        # A interface é servida de web/ — nunca da raiz, para não expor
+        # config.json nem os instaladores pelo HTTP local.
+        super().__init__(*args, directory=str(_WEB_DIR), **kwargs)
+
+    def log_message(self, format, *args):
+        pass
+
+    def translate_path(self, path):
+        # /assets/... vem da pasta assets/ (ícone), fora da raiz web/.
+        limpo = path.split("?", 1)[0].split("#", 1)[0]
+        if limpo.startswith("/assets/"):
+            rel = limpo[len("/assets/"):]
+            if rel and ".." not in rel:
+                achado = _resolver(f"assets/{rel}")
+                if achado:
+                    return str(achado)
+
+        # Serve a partir de web/ externo (editável sem recompilar). Se o arquivo
+        # não existir ali, cai para a cópia embutida em _internal (_BUNDLE_DIR).
+        ext = super().translate_path(path)
+        if os.path.exists(ext):
+            return ext
+        try:
+            rel = os.path.relpath(ext, str(_WEB_DIR))
+            cand = os.path.join(str(_BUNDLE_DIR), "web", rel)
+            if os.path.exists(cand):
+                return cand
+        except ValueError:
+            pass
+        return ext
+
+    # ── Autorização das rotas /api/ ──────────────────────────────────────────
+
+    def _rota(self) -> str:
+        """Caminho sem query string, para roteamento."""
+        return self.path.split("?", 1)[0]
+
+    def _token_recebido(self) -> str:
+        """Token enviado no header (fetch) ou na query ?t= (EventSource, que
+        não permite headers customizados)."""
+        cab = self.headers.get("X-Agente-Token")
+        if cab:
+            return cab
+        _, _, query = self.path.partition("?")
+        return urllib.parse.parse_qs(query).get("t", [""])[0]
+
+    def _autorizado(self) -> bool:
+        """True se a requisição veio da janela do agente."""
+        # 1. Host precisa ser o loopback. Barra DNS rebinding, em que um domínio
+        #    externo resolve para 127.0.0.1 e passa a falar com o agente.
+        host = (self.headers.get("Host") or "").split(":")[0]
+        if host not in ("127.0.0.1", "localhost"):
+            return False
+
+        # 2. Se houver Origin, só aceitamos a da própria janela. Um site
+        #    externo que tentasse chamar a API mandaria a origem dele.
+        origem = self.headers.get("Origin")
+        if origem and origem not in (f"http://127.0.0.1:{self.server.server_port}",
+                                     f"http://localhost:{self.server.server_port}"):
+            return False
+
+        # 3. Token, em tempo constante. Em bytes porque compare_digest recusa
+        #    str não-ASCII, e um token acentuado não pode virar erro 500.
+        recebido = self._token_recebido().encode("utf-8", "replace")
+        return secrets.compare_digest(recebido, _API_TOKEN.encode("utf-8"))
+
+    def _negar(self) -> None:
+        self._json_response(
+            {"ok": False, "erro": "Requisição não autorizada (token inválido)."},
+            status=403)
+
+    def do_GET(self):
+        if self._rota().startswith("/api/") and not self._autorizado():
+            self._negar()
+            return
+
+        if self._rota() == "/api/stream":
+            self._handle_sse()
+        elif self._rota() == "/api/version":
+            self._json_response({"versao": __version__})
+        elif self._rota() == "/api/usuarios/listar":
+            self._json_response(usuarios.listar())
+        elif self._rota() == "/api/usuarios/hostname":
+            self._json_response(usuarios.hostname())
+        elif self._rota() == "/api/programas/listar":
+            self._json_response(programas.listar())
+        elif self._rota() == "/api/monitoramento/status":
+            self._json_response(monitoramento.status())
+        elif self._rota() == "/api/monitoramento/progresso":
+            self._json_response(monitoramento.progresso_atual())
+        elif self._rota() == "/api/vpn/status":
+            self._json_response(vpn.status())
+        else:
+            super().do_GET()
+
+    def _read_json_body(self) -> dict:
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length) if content_length else b""
+        if not post_data:
+            return {}
+        try:
+            return json.loads(post_data.decode("utf-8"))
+        except Exception:
+            return {}
+
+    def do_POST(self):
+        if self._rota().startswith("/api/") and not self._autorizado():
+            self._negar()
+            return
+
+        if self._rota() == "/api/execute":
+            params = self._read_json_body()
+
+            instalar = params.get("instalar_softwares", True)
+            otimizar = params.get("otimizacao", True)
+            sw_lista = params.get("softwares_selecionados", [])
+            integridade = params.get("verificar_integridade", True)
+
+            threading.Thread(
+                target=run_automation,
+                args=(instalar, otimizar, sw_lista, integridade),
+                daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+
+        elif self._rota() == "/api/usuarios/criar":
+            p = self._read_json_body()
+            self._json_response(usuarios.criar(
+                p.get("nome", ""), p.get("senha", ""), bool(p.get("admin", False))))
+
+        elif self._rota() == "/api/usuarios/editar":
+            p = self._read_json_body()
+            self._json_response(usuarios.editar(
+                p.get("sid", ""), p.get("novo_nome", ""), p.get("nova_senha", "")))
+
+        elif self._rota() == "/api/usuarios/excluir":
+            p = self._read_json_body()
+            self._json_response(usuarios.excluir(
+                p.get("sid", ""), bool(p.get("apagar_perfil", False))))
+
+        elif self._rota() == "/api/usuarios/hostname":
+            p = self._read_json_body()
+            self._json_response(usuarios.renomear_maquina(p.get("novo_nome", "")))
+
+        elif self._rota() == "/api/programas/desinstalar":
+            p = self._read_json_body()
+            ids = p.get("ids", [])
+            threading.Thread(
+                target=programas.desinstalar_lote, args=(ids,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+
+        # ── Monitoramento ────────────────────────────────────────────────────
+        # buscar/cadastrar são proxy para a API do BlueControl: devolvem o
+        # status de lá junto com o corpo, para a interface mostrar o erro do
+        # servidor como ele veio. Status 0 = nem chegou a haver resposta HTTP.
+        elif self._rota() == "/api/monitoramento/buscar":
+            p = self._read_json_body()
+            status, data = monitoramento.buscar(
+                p.get("url_api", ""), p.get("token_agente", ""), p.get("q", ""))
+            self._json_response(data, status or 502)
+
+        elif self._rota() == "/api/monitoramento/cadastrar":
+            p = self._read_json_body()
+            url_api = p.pop("url_api", "")
+            token   = p.pop("token_agente", "")
+            status, data = monitoramento.cadastrar(url_api, token, p)
+            self._json_response(data, status or 502)
+
+        elif self._rota() == "/api/monitoramento/instalar":
+            p = self._read_json_body()
+            threading.Thread(
+                target=monitoramento.instalar, args=(p,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+
+        elif self._rota() == "/api/monitoramento/cadastrar_e_instalar":
+            p = self._read_json_body()
+            url_api  = p.get("url_api", "")
+            token    = p.get("token_agente", "")
+            intervalo = p.get("intervalo_segundos", "")
+            patrimonio = p.get("patrimonio")  # já definido se veio da busca
+
+            if not patrimonio:
+                # Cadastrar nova máquina primeiro
+                dados_cad = {k: v for k, v in p.items()
+                             if k not in ("url_api", "token_agente",
+                                          "intervalo_segundos", "patrimonio")}
+                st, data = monitoramento.cadastrar(url_api, token, dados_cad)
+                patrimonio = (data.get("patrimonio")
+                              or data.get("patrimonio_interno"))
+                if not patrimonio:
+                    self._json_response(data, st or 502)
+                    return
+
+            threading.Thread(
+                target=monitoramento.instalar,
+                args=({"patrimonio": patrimonio, "url_api": url_api,
+                       "token_agente": token,
+                       "intervalo_segundos": intervalo},),
+                daemon=True,
+            ).start()
+            self._json_response({"ok": True, "patrimonio": patrimonio})
+
+        elif self._rota() == "/api/monitoramento/excluir":
+            p = self._read_json_body()
+            status, data = monitoramento.excluir(
+                p.get("url_api", ""), p.get("token_agente", ""),
+                p.get("patrimonio", ""))
+            self._json_response(data, status or 502)
+
+        elif self._rota() == "/api/vpn/limpar":
+            p = self._read_json_body()
+            threading.Thread(
+                target=vpn.limpar, args=(p,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+
+        elif self._rota() == "/api/vpn/instalar":
+            p = self._read_json_body()
+            threading.Thread(
+                target=vpn.instalar, args=(p,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+
+        elif self._rota() == "/api/monitoramento/limpar":
+            p = self._read_json_body()
+            threading.Thread(
+                target=monitoramento.limpar, args=(p,), daemon=True,
+            ).start()
+            self._json_response({"ok": True})
+
+        else:
+            self.send_error(404)
+
+    def _handle_sse(self):
+        self.send_response(200)
+        self.send_header("Content-Type",  "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection",    "keep-alive")
+        self.end_headers()
+
+        q: queue.Queue = queue.Queue()
+        with _sse_lock:
+            _sse_queues.append(q)
+
+        try:
+            while True:
+                try:
+                    event = q.get(timeout=20)
+                    data  = json.dumps(event, ensure_ascii=False)
+                    self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                except queue.Empty:
+                    self.wfile.write(b": heartbeat\n\n")
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            with _sse_lock:
+                _sse_queues.remove(q)
+
+    def _json_response(self, data: dict, status: int = 200):
+        body = json.dumps(data).encode()
+        self.send_response(status)
+        self.send_header("Content-Type",   "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class _ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+# ══════════════════════════════════════════════
+#  EMISSÃO DE EVENTOS
+# ══════════════════════════════════════════════
+
+def _segredos_conhecidos() -> List[str]:
+    """Todas as senhas que o config.json carrega. Usadas só para mascarar."""
+    valores = [_ADMIN_PASS]
+    valores += [u.get("senha", "") for u in _USUARIOS_LEGADO]
+    valores += [a.get("unattended_password", "") for a in SOFTWARES]
+    return [v for v in valores if v and len(v) >= 4]
+
+
+def _mascarar(msg: str) -> str:
+    """Troca qualquer senha conhecida por ***.
+
+    Rede de segurança: o log vai para disco e para a interface, e um comando
+    registrado sem rótulo (_run_cmd usa o próprio comando quando não recebe
+    label) poderia levar junto uma senha. Mascarar aqui cobre todos os
+    caminhos de saída de uma vez.
+    """
+    for segredo in _segredos_conhecidos():
+        if segredo in msg:
+            msg = msg.replace(segredo, "***")
+    return msg
+
+
+def _log(msg: str, tipo: str = "muted"):
+    msg = _mascarar(msg)
+    _broadcast({"type": "log", "msg": msg, "tipo": tipo})
+    log.info(msg)
+
+
+def _registrar(msg: str) -> None:
+    """Grava no log em disco sem publicar na interface. Para quem publica os
+    próprios eventos, no canal da sua aba (ver monitoramento.py): o log de
+    disco continua centralizado aqui, com o mesmo mascaramento."""
+    log.info(_mascarar(msg))
+
+
+def _etapa_inicio(etapa: str, pct: int):
+    _broadcast({"type": "etapa_inicio", "etapa": etapa, "pct": pct})
+    _log(f"\n{'─'*52}", "muted")
+    _log(f"  [ETAPA] {etapa.upper()}  ({pct}%)", "info")
+    _log(f"{'─'*52}", "muted")
+
+
+def _etapa_fim(etapa: str, sucesso: bool, pct: int):
+    _broadcast({"type": "etapa_fim", "etapa": etapa, "sucesso": sucesso, "pct": pct})
+
+
+def _sw_progress(nome: str, estado: str, pct: int = 0):
+    """estado: 'baixando' | 'instalando' | 'ok' | 'erro'"""
+    _broadcast({"type": "sw_progress", "nome": nome, "estado": estado, "pct": pct})
+
+
+def _setup_fim(sucesso: bool):
+    _broadcast({"type": "setup_fim", "sucesso": sucesso})
+
+
+# ══════════════════════════════════════════════
+#  UTILITÁRIOS
+# ══════════════════════════════════════════════
+
+def is_admin() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def elevate_and_restart() -> None:
+    def esc(s: str) -> str:
+        return s.replace("'", "''")
+
+    if not _ADMIN_PASS:
+        log.error(
+            "Senha de Administrador não configurada. Verifique 'admin.senha' "
+            "no config.json ao lado do agente."
+        )
+        sys.exit(1)
+
+    if getattr(sys, "frozen", False):
+        target = sys.executable
+        arglist = ""
+    else:
+        target = sys.executable
+        script = str(Path(__file__).resolve())
+        arglist = f"-ArgumentList '\"{esc(script)}\"' "
+
+    ps_cmd = (
+        f"$pass = ConvertTo-SecureString '{esc(_ADMIN_PASS)}' -AsPlainText -Force; "
+        f"$cred = New-Object System.Management.Automation.PSCredential('{esc(_ADMIN_USER)}', $pass); "
+        f"Start-Process '{esc(target)}' "
+        f"{arglist}"
+        f"-Credential $cred -Wait -WindowStyle Hidden"
+    )
+    log.info("Elevando privilégios para Administrador...")
+    subprocess.run(["powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+                   check=False, creationflags=_NO_WINDOW)
+    sys.exit(0)
+
+
+def _run_cmd(cmd: str, label: str = "", timeout: int = 300,
+             ok_codes: Optional[set] = None, detach: bool = False) -> bool:
+    """Executa comando e retorna True se returncode estiver em ok_codes.
+    ok_codes padrão = {0}.  Passe sets adicionais para aceitar 'já instalado' etc.
+
+    detach=True: NÃO captura stdout/stderr (usa DEVNULL). Necessário quando o
+    comando lança um processo PERSISTENTE (explorer.exe, instaladores que abrem
+    o app no fim como Google Drive/AnyDesk) — com pipes capturados, o filho herda
+    o pipe e o mantém aberto, travando o Python até o timeout.
+    """
+    if ok_codes is None:
+        ok_codes = {0}
+    desc = label or cmd[:80]
+    _log(f"  ▶  {desc}", "info")
+    try:
+        if detach:
+            result = subprocess.run(
+                cmd, shell=True, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout,
+                creationflags=_NO_WINDOW,
+            )
+            stdout_txt, stderr_txt = "", ""
+        else:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True,
+                stdin=subprocess.DEVNULL,      # evita travamento: sem stdin = sem espera por input
+                text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                creationflags=_NO_WINDOW,
+            )
+            stdout_txt, stderr_txt = result.stdout or "", result.stderr or ""
+        for line in stdout_txt.strip().splitlines():
+            if line.strip():
+                _log(f"     {line}", "muted")
+        if result.returncode in ok_codes:
+            if result.returncode == 0:
+                _log("  ✔  Sucesso", "ok")
+            else:
+                _log(f"  ✔  Código {result.returncode} → considerado sucesso (ex: já instalado)", "ok")
+            return True
+        for line in stderr_txt.strip().splitlines():
+            if line.strip():
+                _log(f"     {line}", "warn")
+        _log(f"  ✗  Código de saída: {result.returncode}", "warn")
+        return False
+    except subprocess.TimeoutExpired:
+        _log("  ✗  Timeout", "err")
+        return False
+    except Exception as exc:
+        _log(f"  ✗  Exceção: {exc}", "err")
+        return False
+
+
+# ══════════════════════════════════════════════
+#  SCRIPTS COM CREDENCIAIS
+#  Os .ps1 que carregam senhas vão para C:\ProgramData, legível por qualquer
+#  conta da máquina. Por isso nascem restritos e são apagados após o uso.
+# ══════════════════════════════════════════════
+
+def _gravar_script_protegido(caminho: Path, conteudo: str) -> bool:
+    """Grava um script que contém credenciais, acessível só a administradores.
+
+    utf-8-sig (BOM) garante leitura correta de acentos pelo PowerShell 5.1.
+    Os SIDs são usados no lugar dos nomes dos grupos para funcionar em Windows
+    de qualquer idioma: S-1-5-32-544 = Administradores, S-1-5-18 = SYSTEM.
+    """
+    try:
+        caminho.write_text(conteudo, encoding="utf-8-sig")
+    except Exception as exc:
+        _log(f"  ✗  Falha ao gerar {caminho.name}: {exc}", "err")
+        return False
+
+    # /inheritance:r descarta as permissões herdadas de ProgramData (que dão
+    # leitura a Users); /grant:r substitui a lista pelo que vem a seguir.
+    try:
+        subprocess.run(
+            f'icacls "{caminho}" /inheritance:r '
+            f'/grant:r "*S-1-5-32-544:(F)" "*S-1-5-18:(F)"',
+            shell=True, capture_output=True, timeout=30, creationflags=_NO_WINDOW,
+        )
+    except Exception as exc:
+        # Sem ACL o script ainda funciona, mas fica legível — avisa e segue.
+        _log(f"  ⚠  Não foi possível restringir o acesso a {caminho.name}: {exc}", "warn")
+    return True
+
+
+def _apagar_script(caminho: Path) -> None:
+    """Apaga um script que continha credenciais, sobrescrevendo o conteúdo
+    antes de remover para não deixar a senha legível no espaço livre."""
+    try:
+        if not caminho.exists():
+            return
+        tamanho = caminho.stat().st_size
+        with open(caminho, "r+b") as fh:
+            fh.write(b"\x00" * tamanho)
+            fh.flush()
+            os.fsync(fh.fileno())
+        caminho.unlink()
+    except Exception as exc:
+        _log(f"  ⚠  Não foi possível remover {caminho.name}: {exc}", "warn")
+
+
+# ══════════════════════════════════════════════
+#  CONTEXTO DO USUÁRIO LOGADO
+#  O agente roda elevado como Administrator; mas todas as configurações
+#  "por usuário" (wallpaper, modo escuro, barra de tarefas, %TEMP%) precisam
+#  cair no perfil do usuário logado — não no do Administrator.
+# ══════════════════════════════════════════════
+
+_LOGGED_USER_CACHE = None
+_LOGGED_USER_RESOLVED = False
+
+
+def _logged_user() -> Optional[dict]:
+    """Retorna {'user': 'PC\\Joao', 'sid': 'S-1-5-...', 'profile': 'C:\\Users\\Joao'}
+    do usuário logado no console, ou None se não for possível resolver
+    (ex.: rodando logado como o próprio Administrator durante testes)."""
+    global _LOGGED_USER_CACHE, _LOGGED_USER_RESOLVED
+    if _LOGGED_USER_RESOLVED:
+        return _LOGGED_USER_CACHE
+    _LOGGED_USER_RESOLVED = True
+
+    ps = (
+        "$u = (Get-CimInstance Win32_ComputerSystem).UserName; "
+        "if (-not $u) { exit 1 }; "
+        "$sid = (New-Object System.Security.Principal.NTAccount($u))."
+        "Translate([System.Security.Principal.SecurityIdentifier]).Value; "
+        "$p = (Get-ItemProperty "
+        "\"HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\$sid\")"
+        ".ProfileImagePath; "
+        "[pscustomobject]@{user=$u; sid=$sid; profile=$p} | ConvertTo-Json -Compress"
+    )
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+            creationflags=_NO_WINDOW,
+        )
+        out = (r.stdout or "").strip()
+        if out:
+            data = json.loads(out)
+            if data.get("sid") and data.get("user"):
+                _LOGGED_USER_CACHE = data
+                _log(f"  👤  Usuário logado detectado: {data['user']}", "muted")
+    except Exception as exc:
+        _log(f"  ⚠  Não foi possível detectar o usuário logado: {exc}", "warn")
+
+    if _LOGGED_USER_CACHE is None:
+        _log("  ⚠  Usuário logado não resolvido — aplicando no contexto atual (Administrator).", "warn")
+    return _LOGGED_USER_CACHE
+
+
+def _user_reg_base() -> str:
+    """Base de registro por usuário: HKU\\<SID> do usuário logado, ou HKCU como fallback."""
+    info = _logged_user()
+    return f"HKU\\{info['sid']}" if info else "HKCU"
+
+
+def _run_as_logged_user(cmd_path: str, label: str = "") -> bool:
+    """Executa um .cmd no contexto do usuário logado via Agendador de Tarefas.
+    Usa /it (token interativo do usuário logado) — não exige senha."""
+    info = _logged_user()
+    if not info:
+        return _run_cmd(f'"{cmd_path}"', label=label or "Executar script (contexto atual)")
+
+    task = "AgenteBlue_UserApply"
+    subprocess.run(f'schtasks /delete /tn {task} /f', shell=True, capture_output=True, creationflags=_NO_WINDOW)
+    create = (
+        f'schtasks /create /tn {task} /tr "{cmd_path}" /sc once /st 23:59 '
+        f'/ru "{info["user"]}" /it /rl limited /f'
+    )
+    ok = _run_cmd(create, label=f"{label} (criar tarefa no usuário)")
+    if ok:
+        _run_cmd(f'schtasks /run /tn {task}', label=f"{label} (executar)")
+        time.sleep(4)
+        subprocess.run(f'schtasks /delete /tn {task} /f', shell=True, capture_output=True, creationflags=_NO_WINDOW)
+    return ok
+
+
+def _refresh_user_session(restart_explorer: bool = False, clear_recycle: bool = False) -> None:
+    """Aplica as alterações por usuário (tema/wallpaper/barra de tarefas) recarregando
+    os parâmetros do usuário e, opcionalmente, reiniciando o Explorer e esvaziando a
+    Lixeira — tudo no contexto do usuário LOGADO."""
+    info = _logged_user()
+
+    lines = ["@echo off", "rundll32.exe user32.dll,UpdatePerUserSystemParameters 1, True"]
+    if clear_recycle:
+        lines.append('powershell -NoProfile -Command "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"')
+    if restart_explorer:
+        lines.append("taskkill /f /im explorer.exe >nul 2>&1")
+        lines.append("start explorer.exe")
+
+    if not info:
+        _run_cmd('rundll32.exe user32.dll,UpdatePerUserSystemParameters 1, True',
+                 label="Recarregar parâmetros do usuário")
+        if clear_recycle:
+            _run_cmd('powershell -NoProfile -Command "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"',
+                     label="Esvaziar Lixeira")
+        if restart_explorer:
+            _run_cmd("taskkill /f /im explorer.exe", label="Parar Explorer")
+            # detach: explorer é persistente; sem isso o pipe capturado trava o Python.
+            _run_cmd("start explorer.exe", label="Iniciar Explorer", detach=True)
+        return
+
+    script_dir = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    cmd_file = script_dir / "refresh_user.cmd"
+    try:
+        cmd_file.write_text("\r\n".join(lines) + "\r\n", encoding="ascii")
+        _run_as_logged_user(str(cmd_file), label="Aplicar configurações no usuário logado")
+    except Exception as exc:
+        _log(f"  ⚠  Falha ao aplicar no usuário logado: {exc}", "warn")
+
+
+def _download_file(url: str, filename: str, nome_sw: str,
+                   dest_dir: Optional[Path] = None) -> Optional[Path]:
+    base = dest_dir or Path(tempfile.gettempdir())
+    base.mkdir(parents=True, exist_ok=True)
+    dest = base / filename
+    _log(f"  ⬇  Baixando  {filename}", "info")
+    _sw_progress(nome_sw, "baixando", 0)
+    try:
+        # User-Agent completo evita bloqueios por servidores Google/AnyDesk
+        _headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/130.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/octet-stream,*/*",
+        }
+        req = urllib.request.Request(url, headers=_headers)
+        # timeout=600 cobre arquivos grandes (Google Drive ~240 MB)
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            total = int(resp.headers.get("Content-Length", 0))
+            final_url = resp.geturl()
+            if final_url != url:
+                _log(f"  ↪  Redirecionado para: {final_url}", "muted")
+            if total > 0:
+                _log(f"  📦  Tamanho: {total / 1024 / 1024:.1f} MB", "muted")
+            downloaded = 0
+            with open(dest, "wb") as out:
+                while True:
+                    block = resp.read(65536)
+                    if not block:
+                        break
+                    out.write(block)
+                    downloaded += len(block)
+                    if total > 0:
+                        pct = min(int(downloaded * 90 / total), 90)
+                        _sw_progress(nome_sw, "baixando", pct)
+        _log(f"  ✔  Download concluído  ({downloaded / 1024 / 1024:.1f} MB)", "ok")
+        _sw_progress(nome_sw, "baixando", 90)
+        return dest
+    except Exception as exc:
+        _log(f"  ✗  Falha no download: {exc}", "err")
+        _sw_progress(nome_sw, "erro", 0)
+        return None
+
+
+# ══════════════════════════════════════════════
+#  ETAPAS
+# ══════════════════════════════════════════════
+
+def _instalar_via_url(app: dict) -> bool:
+    """Baixa o instalador oficial e roda silencioso (exe ou msiexec).
+    Override offline opcional: se o arquivo existir em apps/, usa-o.
+    user_context=True → instala no perfil do usuário logado (apps por-usuário)."""
+    nome = app["nome"]
+    filename = app["filename"]
+    user_ctx = bool(app.get("user_context"))
+
+    # Apps por-usuário precisam ficar em local legível pelo usuário (ProgramData).
+    dest_dir = (Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
+                if user_ctx else None)
+
+    arquivo: Optional[Path] = None
+    for cand in (_BASE_DIR / "apps" / filename, Path(sys.executable).parent / "apps" / filename):
+        if cand.exists():
+            arquivo = cand
+            _log(f"  📦  Usando instalador local (offline): {cand}", "ok")
+            break
+
+    if arquivo is None:
+        arquivo = _download_file(app["url"], filename, nome, dest_dir=dest_dir)
+        if arquivo is None:
+            return False
+
+    _sw_progress(nome, "instalando", 92)
+    ok_codes = app.get("ok_codes", {0})
+    args = app.get("args", "")
+
+    if app.get("msi"):
+        cmd = f'msiexec /i "{arquivo}" {args}'
+    else:
+        cmd = f'"{arquivo}" {args}'.rstrip()
+
+    # App por-usuário: roda no contexto do usuário logado via tarefa agendada.
+    if user_ctx and _logged_user():
+        script_dir = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
+        script_dir.mkdir(parents=True, exist_ok=True)
+        cmd_file = script_dir / "install_user_app.cmd"
+        try:
+            cmd_file.write_text("@echo off\r\n" + cmd + "\r\n", encoding="ascii")
+        except Exception as exc:
+            _log(f"  ⚠  Falha ao preparar instalação no usuário: {exc}", "warn")
+            return False
+        return _run_as_logged_user(str(cmd_file), label=f"Instalando {nome} (usuário logado)")
+
+    # detach=True: instaladores podem abrir o app no fim (processo persistente)
+    # e travariam o pipe capturado.
+    return _run_cmd(cmd, label=f"Instalando {nome}", timeout=1800,
+                    ok_codes=ok_codes, detach=True)
+
+
+def _instalar_via_local(app: dict) -> bool:
+    """Instala a partir de um executável local. Procura nesta ordem:
+      1. pasta installers/ ao lado do executável (troca instaladores sem recompilar)
+      2. cópia embutida no próprio .exe          (_MEIPASS/installers — build onefile)"""
+    nome = app["nome"]
+    filename = app["filename"]
+    user_ctx = bool(app.get("user_context"))
+
+    candidatos = [
+        _EXE_DIR / filename,                 # externo (ao lado do .exe)
+        _BUNDLE_DIR / "installers" / filename,  # embutido (dentro do .exe / _MEIPASS)
+    ]
+    arquivo = next((c for c in candidatos if c.exists()), None)
+
+    if arquivo is None:
+        _log(f"  ✗  Instalador não encontrado: {filename}", "err")
+        _log(f"     Procurei em: {_EXE_DIR} e na cópia embutida.", "warn")
+        return False
+
+    _log(f"  📦  Instalador local encontrado: {arquivo}", "ok")
+    _sw_progress(nome, "instalando", 50)
+
+    ok_codes = app.get("ok_codes", {0})
+    args = app.get("args", "")
+
+    # App por-usuário (ex.: Slack/Squirrel instala em %LocalAppData%): copia o
+    # instalador para ProgramData (legível pelo usuário limitado) e roda no
+    # contexto do usuário logado — senão cairia no perfil do Administrador.
+    if user_ctx and _logged_user():
+        script_dir = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
+        script_dir.mkdir(parents=True, exist_ok=True)
+        destino = script_dir / filename
+        try:
+            if not destino.exists() or destino.stat().st_size != arquivo.stat().st_size:
+                shutil.copy2(arquivo, destino)
+            cmd = f'"{destino}" {args}'.rstrip()
+            cmd_file = script_dir / "install_user_app.cmd"
+            cmd_file.write_text("@echo off\r\n" + cmd + "\r\n", encoding="ascii")
+        except Exception as exc:
+            _log(f"  ⚠  Falha ao preparar instalação no usuário: {exc}", "warn")
+            return False
+        return _run_as_logged_user(str(cmd_file), label=f"Instalando {nome} (usuário logado)")
+
+    suf = arquivo.suffix.lower()
+    if suf in (".msix", ".msixbundle", ".appx", ".appxbundle"):
+        # MSIX/Appx não roda como .exe: provisiona para todos os usuários, que
+        # recebem o app no próximo logon.
+        ps = f"Add-AppxProvisionedPackage -Online -PackagePath '{arquivo}' -SkipLicense"
+        cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "{ps}"'
+    elif app.get("msi"):
+        cmd = f'msiexec /i "{arquivo}" {args}'
+    else:
+        cmd = f'"{arquivo}" {args}'.rstrip()
+
+    return _run_cmd(cmd, label=f"Instalando {nome}", timeout=1800,
+                    ok_codes=ok_codes, detach=True)
+
+
+def _etapa_downloads(sw_lista: list = None) -> bool:
+    _etapa_inicio("downloads", 5)
+    etapa_ok = True
+
+    if not SOFTWARES:
+        _log("  Nenhum software configurado.", "muted")
+        _etapa_fim("downloads", True, 28)
+        return True
+
+    for app in SOFTWARES:
+        nome = app["nome"]
+
+        if sw_lista is not None and nome not in sw_lista:
+            _log(f"  ⏭  {nome} não selecionado. Pulando...", "muted")
+            continue
+
+        _log(f"\n  → {nome}", "info")
+
+        detect = app.get("detect")
+        if detect and Path(detect).exists():
+            _log(f"  ✔  {nome} já está instalado no sistema. Pulando...", "ok")
+            _sw_progress(nome, "ok", 100)
+            continue
+
+        metodo = app.get("metodo")
+        if metodo == "local":
+            ok = _instalar_via_local(app)
+        else:
+            ok = _instalar_via_url(app)
+
+        # Verificação por PRESENÇA real: vários instaladores retornam código de
+        # erro mesmo tendo instalado. Se o caminho de detecção passar a existir,
+        # consideramos sucesso (só promovemos falso-erro; nunca rebaixamos, pois
+        # instaladores como o Office terminam em segundo plano).
+        if detect and not ok:
+            for _ in range(5):           # aguarda até ~10s o instalador finalizar
+                if Path(detect).exists():
+                    _log(f"  ✔  {nome} detectado instalado (código de saída ignorado).", "ok")
+                    ok = True
+                    break
+                time.sleep(2)
+
+        if ok:
+            _sw_progress(nome, "ok", 100)
+            # Regra de Firewall para o AnyDesk (garante conexão).
+            if app.get("firewall") and detect:
+                _log("  ⚡  Liberando AnyDesk no Firewall...", "muted")
+                _run_cmd(f'netsh advfirewall firewall add rule name="AnyDesk_Blue" dir=in action=allow program="{detect}" enable=yes', label="Firewall: AnyDesk Inbound")
+                _run_cmd(f'netsh advfirewall firewall add rule name="AnyDesk_Blue" dir=out action=allow program="{detect}" enable=yes', label="Firewall: AnyDesk Outbound")
+
+            # Senha de Acesso Não Supervisionado (definida via config.json).
+            # `--set-password` grava a senha e já habilita o acesso não
+            # supervisionado, sem precisar abrir a interface do AnyDesk.
+            senha_anydesk = app.get("unattended_password")
+            if senha_anydesk and detect:
+                _log("  🔑  Definindo senha de acesso não supervisionado do AnyDesk...", "muted")
+                # Pelo stdin, sem shell: na linha de comando a senha ficaria
+                # visível no Gerenciador de Tarefas e na auditoria (evento 4688).
+                try:
+                    proc = subprocess.run(
+                        [detect, "--set-password"],
+                        input=f"{senha_anydesk}\n".encode("utf-8"),
+                        capture_output=True, timeout=30, creationflags=_NO_WINDOW,
+                    )
+                    if proc.returncode == 0:
+                        _log("  ✔  Senha do AnyDesk definida.", "ok")
+                    else:
+                        _log(f"  ⚠  AnyDesk retornou código {proc.returncode} "
+                             "ao definir a senha.", "warn")
+                except Exception as exc:
+                    _log(f"  ⚠  Falha ao definir a senha do AnyDesk: {exc}", "warn")
+        else:
+            _log(f"  ⚠  Instalação de {nome} pode ter falhado (verifique o log).", "warn")
+            _sw_progress(nome, "erro", 0)
+            etapa_ok = False
+        time.sleep(2)
+
+    _etapa_fim("downloads", etapa_ok, 28)
+    return etapa_ok
+
+
+def _etapa_wallpaper() -> bool:
+    _etapa_inicio("wallpaper", 30)
+
+    # Fallback para o nome solto na raiz: layout anterior a v3.
+    src: Optional[Path] = None
+    for nome in _WALLPAPER_NAMES:
+        cand = _resolver(f"assets/{nome}") or _resolver(nome)
+        if cand:
+            src = cand.resolve()
+            break
+
+    if src is None:
+        _log("  ⚠  Imagem 'Fundo de Tela.*' não encontrada em assets/. Pulando wallpaper.", "warn")
+        _etapa_fim("wallpaper", False, 35)
+        return False
+
+    # _MEIPASS é temporária e o wallpaper precisa de disco fixo; ProgramData
+    # é legível também pelo usuário logado não-admin.
+    dest_dir = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / src.name
+    try:
+        shutil.copy2(src, dest)
+        _log(f"  📋  Imagem copiada para: {dest}", "muted")
+    except Exception as exc:
+        _log(f"  ⚠  Falha ao copiar imagem: {exc} — usando caminho original", "warn")
+        dest = src   # tenta mesmo assim
+
+    wallpaper_path = str(dest)
+    _log(f"  🖼  Aplicando wallpaper para o usuário logado: {wallpaper_path}", "info")
+
+    # ── Escreve no hive do usuário LOGADO (não do Administrator) ──────────────
+    base = _user_reg_base()
+    reg_desk = f"{base}\\Control Panel\\Desktop"
+    ok = _run_cmd(f'reg add "{reg_desk}" /v WallPaper /t REG_SZ /d "{wallpaper_path}" /f',
+                  label="Wallpaper: caminho")
+    _run_cmd(f'reg add "{reg_desk}" /v WallpaperStyle /t REG_SZ /d 10 /f',
+             label="Wallpaper: estilo (Preencher)")
+    _run_cmd(f'reg add "{reg_desk}" /v TileWallpaper /t REG_SZ /d 0 /f',
+             label="Wallpaper: sem lado a lado")
+
+    _refresh_user_session(restart_explorer=False)
+
+    _etapa_fim("wallpaper", ok, 35)
+    return ok
+
+
+def _etapa_rede() -> bool:
+    _etapa_inicio("rede", 38)
+    etapa_ok = True
+
+    # ── 1. Habilitar serviços de Descoberta de Rede ─────────────────────────
+    _log("\n  > Habilitando serviços de Descoberta de Rede...", "muted")
+    for svc, desc in [
+        ("FDResPub", "Publicação de Recursos de Descoberta de Função"),
+        ("SSDPSRV",  "Descoberta SSDP"),
+        ("upnphost", "Host de Dispositivo UPnP"),
+        ("fdPHost",  "Host do Provedor de Descoberta de Função"),
+    ]:
+        _run_cmd(f'sc config "{svc}" start= auto', label=f"Serviço {svc} → auto")
+        _run_cmd(f'net start "{svc}"',              label=f"Iniciar {svc}")
+
+    # ── 2. Firewall via PowerShell — SEM -match (usa -like, sem aspas internas) ──
+    _log("\n  > Habilitando regras de firewall (PowerShell)...", "muted")
+
+    # Habilitar descoberta + compartilhamento no perfil Privado
+    ps_private_on = (
+        "powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "
+        "\"$rules = Get-NetFirewallRule; "
+        "$filtered = $rules | Where-Object { "
+        "($_.Group -like '*Discovery*') -or ($_.Group -like '*Descoberta*') -or "
+        "($_.Group -like '*File and Printer*') -or ($_.Group -like '*Arquivo*') }; "
+        "$filtered | Where-Object { $_.Profile -band 2 } | "
+        "Set-NetFirewallRule -Enabled True\""
+    )
+    if not _run_cmd(ps_private_on, label="Firewall: habilitar Descoberta/Compartilhamento (Privado)"):
+        etapa_ok = False
+
+    # Desabilitar descoberta no perfil Público
+    ps_public_off = (
+        "powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "
+        "\"$rules = Get-NetFirewallRule; "
+        "$filtered = $rules | Where-Object { "
+        "($_.Group -like '*Discovery*') -or ($_.Group -like '*Descoberta*') }; "
+        "$filtered | Where-Object { $_.Profile -band 4 } | "
+        "Set-NetFirewallRule -Enabled False\""
+    )
+    _run_cmd(ps_public_off, label="Firewall: desabilitar Descoberta (Público)")
+
+    # ── 3. netsh fallback PT + EN ────────────────────────────────────────────
+    _log("\n  > Aplicando regras netsh (fallback PT/EN)...", "muted")
+    for cmd, label in [
+        ('netsh advfirewall firewall set rule group="Descoberta de Rede" new enable=Yes profile=private',
+         "netsh: Descoberta de Rede → Privada ON"),
+        ('netsh advfirewall firewall set rule group="Network Discovery" new enable=Yes profile=private',
+         "netsh: Network Discovery → Private ON"),
+        ('netsh advfirewall firewall set rule group="Compartilhamento de Arquivo e Impressora" new enable=Yes profile=private',
+         "netsh: Compartilhamento → Privada ON"),
+        ('netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=Yes profile=private',
+         "netsh: File and Printer Sharing → Private ON"),
+        ('netsh advfirewall firewall set rule group="Descoberta de Rede" new enable=No profile=public',
+         "netsh: Descoberta de Rede → Pública OFF"),
+        ('netsh advfirewall firewall set rule group="Network Discovery" new enable=No profile=public',
+         "netsh: Network Discovery → Public OFF"),
+        ('netsh advfirewall firewall set rule group="Compartilhamento de Arquivo e Impressora" new enable=No profile=public',
+         "netsh: Compartilhamento → Pública OFF"),
+        ('netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=No profile=public',
+         "netsh: File and Printer Sharing → Public OFF"),
+    ]:
+        _run_cmd(cmd, label=label)  # não bloqueia se grupo não existir no idioma
+
+    # ── 4. Reforço via Registro (Descoberta de Rede) ──────────────────────────
+    _log("\n  > Reforçando Descoberta de Rede via Registro...", "muted")
+    reg_path = r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
+    _run_cmd(f'reg add "{reg_path}" /v "AllowInsecureGuestAuth" /t REG_DWORD /d 1 /f', label="Permitir Logon de Convidado Inseguro")
+    
+    _etapa_fim("rede", etapa_ok, 58)
+    return etapa_ok
+
+
+def _etapa_smb() -> bool:
+    _etapa_inicio("smb", 60)
+
+    # O Registro é o que de fato define a assinatura SMB e funciona sempre (até
+    # no Sandbox). O cmdlet Set-SmbClientConfiguration é apenas um atalho
+    # redundante: se falhar (ex.: serviço LanmanWorkstation indisponível no
+    # Sandbox) não invalidamos a etapa — só registramos aviso.
+    _log("\n  > Via PowerShell (Set-SmbClientConfiguration)...", "muted")
+    if not _run_cmd(
+        'powershell.exe -ExecutionPolicy Bypass -NoProfile -Command '
+        '"Set-SmbClientConfiguration -RequireSecuritySignature $false -Force"',
+        label="Set-SmbClientConfiguration RequireSecuritySignature=False",
+    ):
+        _log("  ⚠  Cmdlet SMB indisponível (comum no Sandbox). Aplicando via Registro.", "warn")
+
+    _log("\n  > Via Registro do Windows...", "muted")
+    base = r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
+    ok_reg1 = _run_cmd(f'reg add "{base}" /v EnableSecuritySignature /t REG_DWORD /d 0 /f',
+                       label="Registro: EnableSecuritySignature = 0")
+    ok_reg2 = _run_cmd(f'reg add "{base}" /v RequireSecuritySignature /t REG_DWORD /d 0 /f',
+                       label="Registro: RequireSecuritySignature = 0")
+
+    etapa_ok = ok_reg1 and ok_reg2
+    _etapa_fim("smb", etapa_ok, 64)
+    return etapa_ok
+
+
+def _remover_bloatware() -> None:
+    """Remove apps inúteis pré-instalados para TODOS os usuários e os
+    'deprovisiona' (para não voltarem em novos perfis/usuários). Best-effort:
+    apps que o Windows protege simplesmente falham e são ignorados."""
+    _log("  > Removendo aplicativos inúteis (bloatware)...", "muted")
+
+    apps_ps = ",".join(f"'{a}'" for a in _BLOATWARE)
+    linhas = [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        f"$apps = @({apps_ps})",
+        "foreach ($a in $apps) {",
+        "  Get-AppxPackage -AllUsers -Name $a | ForEach-Object {",
+        "    try {",
+        "      Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction Stop",
+        "      Write-Host \"  [-] Removido: $($_.Name)\"",
+        "    } catch { Write-Host \"  [=] Mantido (protegido): $($_.Name)\" }",
+        "  }",
+        "  Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like $a } | ForEach-Object {",
+        "    try {",
+        "      Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction Stop | Out-Null",
+        "      Write-Host \"  [-] Deprovisionado: $($_.DisplayName)\"",
+        "    } catch {}",
+        "  }",
+        "}",
+    ]
+
+    script_dir = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    ps_file = script_dir / "remover_bloatware.ps1"
+    try:
+        ps_file.write_text("\r\n".join(linhas) + "\r\n", encoding="utf-8-sig")
+    except Exception as exc:
+        _log(f"  ⚠  Falha ao gerar script de remoção: {exc}", "warn")
+        return
+
+    _run_cmd(
+        f'powershell -NoProfile -ExecutionPolicy Bypass -File "{ps_file}"',
+        label="Remover bloatware (todos os usuários)", timeout=600,
+    )
+
+
+def _remover_onedrive() -> None:
+    """Desinstala o OneDrive — somente se ainda estiver instalado.
+    O OneDrive é por-usuário, então a desinstalação roda no contexto do usuário
+    logado (onde ele realmente está). Não apaga arquivos locais do usuário."""
+    sysroot = os.environ.get("SystemRoot", r"C:\Windows")
+    candidatos = [
+        Path(sysroot) / "System32" / "OneDriveSetup.exe",
+        Path(sysroot) / "SysWOW64" / "OneDriveSetup.exe",
+    ]
+    setup = next((s for s in candidatos if s.exists()), None)
+
+    if setup is None:
+        _log("  ℹ  OneDrive não encontrado (já desinstalado). Pulando.", "muted")
+        return
+
+    _log("  > Desinstalando OneDrive...", "muted")
+    linhas = [
+        "@echo off",
+        "taskkill /f /im OneDrive.exe >nul 2>&1",
+        f'"{setup}" /uninstall',
+    ]
+
+    info = _logged_user()
+    if info:
+        script_dir = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
+        script_dir.mkdir(parents=True, exist_ok=True)
+        cmd_file = script_dir / "remover_onedrive.cmd"
+        try:
+            cmd_file.write_text("\r\n".join(linhas) + "\r\n", encoding="ascii")
+            _run_as_logged_user(str(cmd_file), label="Desinstalar OneDrive (usuário logado)")
+        except Exception as exc:
+            _log(f"  ⚠  Falha ao desinstalar OneDrive: {exc}", "warn")
+    else:
+        _run_cmd("taskkill /f /im OneDrive.exe", label="Encerrar OneDrive")
+        _run_cmd(f'"{setup}" /uninstall', label="Desinstalar OneDrive")
+
+
+def _etapa_otimizacao() -> bool:
+    _etapa_inicio("otimizacao", 66)
+    _log("\n  ⚡  OTIMIZAÇÃO E LIMPEZA DO WINDOWS...", "info")
+
+    acoes_ok = 0
+
+    try:
+        espaco_inicial = shutil.disk_usage("C:").free
+    except Exception:
+        espaco_inicial = 0
+
+    # ── 1. Plano de Energia: Alto Desempenho (sistema, requer admin) ──────────
+    if _run_cmd("powercfg -setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c", label="Ativar Alto Desempenho"):
+        acoes_ok += 1
+
+    # ── 2. Energia: nunca desligar tela/suspender; desativar hibernação ───────
+    _log("  > Configurando tempos de suspensão/vídeo para NUNCA...", "muted")
+    for c in [
+        "powercfg -x -monitor-timeout-ac 0",
+        "powercfg -x -monitor-timeout-dc 0",
+        "powercfg -x -standby-timeout-ac 0",
+        "powercfg -x -standby-timeout-dc 0",
+        "powercfg -x -hibernate-timeout-ac 0",
+        "powercfg -x -hibernate-timeout-dc 0",
+        "powercfg -h off",
+    ]:
+        _run_cmd(c, label=f"Energia: {c}")
+    acoes_ok += 1
+
+    # ── 3. Configurações POR USUÁRIO (no hive do usuário LOGADO, não do admin) ─
+    base       = _user_reg_base()
+    themes     = f"{base}\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"
+    advanced   = f"{base}\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"
+    search     = f"{base}\\Software\\Microsoft\\Windows\\CurrentVersion\\Search"
+    bgapps     = f"{base}\\Software\\Microsoft\\Windows\\CurrentVersion\\BackgroundAccessApplications"
+    storage    = f"{base}\\Software\\Microsoft\\Windows\\CurrentVersion\\StorageSense\\Parameters\\StoragePolicy"
+    winmetrics = f"{base}\\Control Panel\\Desktop\\WindowMetrics"
+    desktop    = f"{base}\\Control Panel\\Desktop"
+    visualfx   = f"{base}\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects"
+
+    _log("  > Aplicando ajustes visuais e de barra de tarefas no usuário logado...", "muted")
+
+    # ── Acessibilidade > Efeitos Visuais: EFEITOS DE TRANSPARÊNCIA = OFF ──────
+    _run_cmd(f'reg add "{themes}" /v EnableTransparency /t REG_DWORD /d 0 /f', label="Efeitos de transparência: OFF")
+
+    # Replica "Ajustar para melhor desempenho": VisualFXSetting=2 é o master e
+    # UserPreferencesMask 9012038010000000 é a máscara que o Windows grava nesse modo.
+    _run_cmd(f'reg add "{visualfx}" /v VisualFXSetting /t REG_DWORD /d 2 /f', label="Efeitos visuais: melhor desempenho")
+    _run_cmd(f'reg add "{desktop}" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f', label="Efeitos de animação: OFF (máscara)")
+    _run_cmd(f'reg add "{winmetrics}" /v MinAnimate /t REG_SZ /d 0 /f', label="Animação de janela: OFF")
+    _run_cmd(f'reg add "{advanced}" /v TaskbarAnimations /t REG_DWORD /d 0 /f', label="Animações da barra de tarefas: OFF")
+
+    _run_cmd(f'reg add "{advanced}" /v ListviewAlphaSelect /t REG_DWORD /d 0 /f', label="Seleção translúcida: OFF")
+    _run_cmd(f'reg add "{advanced}" /v ListviewShadow /t REG_DWORD /d 0 /f', label="Sombras de ícones: OFF")
+
+    _run_cmd(f'reg add "{themes}" /v SystemUsesLightTheme /t REG_DWORD /d 0 /f', label="Modo escuro (sistema)")
+    _run_cmd(f'reg add "{themes}" /v AppsUseLightTheme /t REG_DWORD /d 0 /f', label="Modo escuro (apps)")
+
+    # ── Barra de tarefas: oculta Pesquisa, Visão de Tarefas e Widgets ────────
+    _run_cmd(f'reg add "{search}" /v SearchboxTaskbarMode /t REG_DWORD /d 0 /f', label="Pesquisa na barra: SEMPRE oculta")
+    _run_cmd(f'reg add "{advanced}" /v ShowTaskViewButton /t REG_DWORD /d 0 /f', label="Visão de Tarefas: OFF")
+    _run_cmd(f'reg add "{advanced}" /v TaskbarDa /t REG_DWORD /d 0 /f', label="Widgets: OFF (usuário)")
+    _run_cmd(r'reg add "HKLM\SOFTWARE\Policies\Microsoft\Dsh" /v AllowNewsAndInterests /t REG_DWORD /d 0 /f', label="Widgets: OFF (máquina)")
+
+    _run_cmd(f'reg add "{advanced}" /v IsBatteryPercentageEnabled /t REG_DWORD /d 1 /f', label="Mostrar % da bateria")
+    _run_cmd(f'reg add "{bgapps}" /v GlobalUserDisabled /t REG_DWORD /d 1 /f', label="Desativar apps em segundo plano")
+    _run_cmd(f'reg add "{storage}" /v 01 /t REG_DWORD /d 1 /f', label="Ativar Storage Sense")
+    acoes_ok += 1
+
+    # ── 4. Limpeza PROFUNDA de temporários e caches (usuário + sistema) ───────
+    _log("  > Limpando pastas temporárias e caches...", "muted")
+    info = _logged_user()
+    user_profile = (info["profile"] if info
+                    else os.environ.get("USERPROFILE", r"C:\Users\Default"))
+    user_temp = (f"{user_profile}\\AppData\\Local\\Temp" if info
+                 else os.environ.get("TEMP", r"C:\Windows\Temp"))
+    local_appdata = f"{user_profile}\\AppData\\Local"
+
+    # Pastas cujo CONTEÚDO será apagado (a pasta em si é preservada).
+    pastas_limpeza = [
+        (user_temp,                                              "Temp do usuário (%TEMP%)"),
+        (r"C:\Windows\Temp",                                     "Temp do Windows"),
+        (r"C:\Windows\Prefetch",                                 "Prefetch"),
+        (f"{local_appdata}\\Microsoft\\Windows\\INetCache",      "Cache de Internet (INetCache)"),
+        (f"{local_appdata}\\Microsoft\\Windows\\Explorer",       "Cache de miniaturas/ícones"),
+        (f"{local_appdata}\\Microsoft\\Windows\\WER",            "Relatórios de Erros (WER)"),
+        (f"{local_appdata}\\CrashDumps",                         "Despejos de falha (CrashDumps)"),
+        (r"C:\Windows\Minidump",                                 "Minidumps do sistema"),
+        (r"C:\ProgramData\Microsoft\Windows\WER\ReportQueue",   "Fila de relatórios de erro (sistema)"),
+    ]
+
+    # cmd /c via shell=True usa loop FOR de linha de comando (%x, não %%x).
+    def _wipe(folder: str) -> None:
+        """Apaga arquivos e subpastas DO CONTEÚDO de 'folder' (best-effort)."""
+        for c in (
+            f'del /q /f /s "{folder}\\*" >nul 2>&1',
+            f'for /d %x in ("{folder}\\*") do @rd /s /q "%x" >nul 2>&1',
+        ):
+            try:
+                subprocess.run(c, shell=True, capture_output=True, timeout=120, creationflags=_NO_WINDOW)
+            except subprocess.TimeoutExpired:
+                _log(f"  ⚠  Limpeza demorou demais em {folder} (arquivos em uso).", "warn")
+
+    for folder, desc in pastas_limpeza:
+        if os.path.isdir(folder):
+            _log(f"     • {desc}", "muted")
+            _wipe(folder)
+    _run_cmd("ipconfig /flushdns", label="Limpar cache DNS", timeout=20)
+    acoes_ok += 1
+
+    # ── 5. Cache do Windows Update ────────────────────────────────────────────
+    _log("  > Limpando cache do Windows Update...", "muted")
+    _run_cmd("net stop wuauserv /y", label="Parar Windows Update", timeout=15)
+    _run_cmd(r'rd /s /q "C:\Windows\SoftwareDistribution\Download"', label="Limpar cache de download", timeout=30)
+    _run_cmd("net start wuauserv", label="Reiniciar Windows Update", timeout=15)
+    acoes_ok += 1
+
+    # ── 5.1. Otimização do disco do sistema (TRIM em SSD / desfrag em HD) ──────
+    # Optimize-Volume detecta a mídia: TRIM em SSD, desfragmentação em HD.
+    _log("  > Otimizando o disco do sistema (C:)...", "muted")
+    if _run_cmd(
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command "Optimize-Volume -DriveLetter C -Verbose"',
+        label="Otimizar disco C: (TRIM/Desfrag)", timeout=900,
+    ):
+        acoes_ok += 1
+
+    # ── 6. Remoção de bloatware (Xbox) + OneDrive ─────────────────────────────
+    _remover_bloatware()
+    _remover_onedrive()
+    acoes_ok += 1
+
+    # ── 7. Aplicar tudo no usuário logado: tema/wallpaper + barra + lixeira ────
+    _log("  > Aplicando alterações e reiniciando o Explorer no usuário logado...", "muted")
+    _refresh_user_session(restart_explorer=True, clear_recycle=True)
+    acoes_ok += 1
+
+    try:
+        espaco_final = shutil.disk_usage("C:").free
+        liberado_mb = max(0, (espaco_final - espaco_inicial) / (1024 * 1024))
+    except Exception:
+        liberado_mb = 0
+
+    _log("\n  ✅  RELATÓRIO DE OTIMIZAÇÃO", "ok")
+    _log(f"      Ações executadas: {acoes_ok}", "muted")
+    _log(f"      Espaço liberado estimado: {liberado_mb:.2f} MB", "muted")
+
+    _etapa_fim("otimizacao", True, 90)
+    return True
+
+
+def _etapa_integridade() -> bool:
+    """Verificação de integridade do sistema, executada ao final do setup.
+
+    Modo (config.json → integridade.modo):
+      • "rapido"   (padrão): apenas sfc /scannow — repara arquivos do sistema
+                    usando o armazenamento de componentes local. Bem mais rápido.
+      • "completo": DISM /RestoreHealth (contata o Windows Update e pode demorar
+                    bastante) + sfc /scannow. Use só quando suspeitar que o
+                    próprio armazenamento de componentes está corrompido."""
+    _etapa_inicio("integridade", 92)
+
+    if INTEGRIDADE and not INTEGRIDADE.get("habilitar", True):
+        _log("  Verificação de integridade desabilitada na configuração. Pulando...", "muted")
+        _etapa_fim("integridade", True, 100)
+        return True
+
+    modo = str(INTEGRIDADE.get("modo", "rapido")).lower()
+    etapa_ok = True
+    _log("\n  🔧  VERIFICAÇÃO DE INTEGRIDADE DO SISTEMA...", "info")
+
+    # DISM só no modo completo (é a parte lenta — contata o Windows Update).
+    if modo == "completo":
+        _log("  ⏳  Modo COMPLETO (DISM + SFC) — pode demorar bastante.", "muted")
+        _log("\n  > DISM /Online /Cleanup-Image /RestoreHealth ...", "muted")
+        if not _run_cmd("DISM /Online /Cleanup-Image /RestoreHealth",
+                        label="DISM RestoreHealth", timeout=2400):
+            etapa_ok = False
+    else:
+        _log("  ⚡  Modo RÁPIDO (apenas SFC). Para reparo profundo, use modo 'completo'.", "muted")
+
+    _log("\n  > sfc /scannow ...", "muted")
+    # sfc retorna 0 quando não há violações; outros códigos indicam reparos/erros.
+    if not _run_cmd("sfc /scannow", label="SFC ScanNow", timeout=1800):
+        # SFC pode retornar != 0 mesmo tendo reparado com sucesso; apenas registramos.
+        _log("  ⚠  SFC retornou código diferente de 0 (verifique o CBS.log).", "warn")
+
+    _log("\n  ✅  Verificação de integridade concluída.", "ok")
+    _etapa_fim("integridade", etapa_ok, 100)
+    return etapa_ok
+
+
+# ══════════════════════════════════════════════
+#  ORQUESTRADOR
+# ══════════════════════════════════════════════
+
+def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
+                   sw_lista: list = None, verificar_integridade: bool = True):
+    inicio = datetime.now()
+    erros: List[str] = []
+
+    _log("=" * 52, "muted")
+    _log("  AGENTE BLUE — " + inicio.strftime("%d/%m/%Y  %H:%M:%S"), "info")
+    _log(f"  Log completo: {_LOG_FILE}", "muted")
+    _log("=" * 52, "muted")
+
+    if instalar_softwares:
+        if not _etapa_downloads(sw_lista):
+            erros.append("downloads")
+    else:
+        _log("\n  [INFO] Pulando etapa de downloads conforme solicitado.", "info")
+        _etapa_inicio("downloads", 5)
+        _log("  Etapa ignorada pelo usuário.", "muted")
+        _etapa_fim("downloads", True, 28)
+
+    _etapa_wallpaper()          # wallpaper: falha não é crítica
+    if not _etapa_rede():
+        erros.append("rede")
+    if not _etapa_smb():
+        erros.append("smb")
+
+    # Não há etapa de usuários: o setup não cria mais contas locais sozinho.
+    # Criar "Suporte" e "Administrador" em toda máquina espalhava credencial
+    # conhecida por todo o parque. Quem precisa de conta cria na aba Usuários,
+    # caso a caso.
+
+    if otimizacao:
+        _etapa_otimizacao()
+    else:
+        _log("\n  [INFO] Pulando etapa de otimização.", "info")
+        _etapa_inicio("otimizacao", 66)
+        _etapa_fim("otimizacao", True, 90)
+
+    if verificar_integridade:
+        if not _etapa_integridade():
+            erros.append("integridade")
+    else:
+        _log("\n  [INFO] Pulando verificação de integridade.", "info")
+        _etapa_inicio("integridade", 92)
+        _etapa_fim("integridade", True, 100)
+
+    duracao = int((datetime.now() - inicio).total_seconds())
+    _log("\n" + "=" * 52, "muted")
+    if erros:
+        _log(f"  SETUP CONCLUÍDO COM AVISOS  ({duracao}s)", "warn")
+        _log(f"  Etapas com erros: {', '.join(erros)}", "warn")
+        _setup_fim(False)
+    else:
+        _log(f"  SETUP CONCLUÍDO COM SUCESSO ✔  ({duracao}s)", "ok")
+        _setup_fim(True)
+    _log("=" * 52, "muted")
+
+
+# ══════════════════════════════════════════════
+#  ABERTURA DA JANELA
+# ══════════════════════════════════════════════
+
+_EDGE_PATHS = [
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+]
+_CHROME_PATHS = [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+]
+
+
+def _open_app_window(url: str):
+    for path in _EDGE_PATHS + _CHROME_PATHS:
+        if Path(path).exists():
+            subprocess.Popen([
+                path, f"--app={url}",
+                "--window-size=580,720",
+                "--window-position=100,40",
+                "--disable-extensions",
+                "--no-first-run",
+            ])
+            return
+    webbrowser.open(url)
+
+
+# ══════════════════════════════════════════════
+#  PONTO DE ENTRADA
+# ══════════════════════════════════════════════
+
+def main() -> None:
+    log.info("=" * 52)
+    log.info(f"  AGENTE BLUE  v{__version__}  —  "
+             + datetime.now().strftime("%d/%m/%Y  %H:%M:%S"))
+    log.info("=" * 52)
+
+    if not is_admin():
+        log.info("Sem privilégios de Administrador — elevando...")
+        elevate_and_restart()
+        return
+
+    log.info("✔  Rodando como Administrador.")
+
+    usuarios.init(_log, _logged_user, _NO_WINDOW,
+                  _gravar_script_protegido, _apagar_script)
+    programas.init(_log, _broadcast, _logged_user, _NO_WINDOW)
+    monitoramento.init(_broadcast, _registrar, _resolver, _NO_WINDOW)
+    vpn.init(_broadcast, _registrar, _resolver, _NO_WINDOW)
+
+    port   = _find_free_port()
+    server = _ThreadedServer(("127.0.0.1", port), AgenteHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+
+    # O token viaja na URL de abertura: só esta janela passa a conhecê-lo.
+    url = f"http://127.0.0.1:{port}/index.html?t={_API_TOKEN}"
+    log.info(f"Servidor local em: {url}")
+    _open_app_window(url)
+
+    log.info("Aguardando interação do usuário. Ctrl+C para encerrar.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        log.info("Encerrando Agente Blue.")
+        server.shutdown()
+
+
+if __name__ == "__main__":
+    main()

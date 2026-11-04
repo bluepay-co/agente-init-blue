@@ -1,18 +1,72 @@
-# Byte-compiled / optimized / DLL files
+# ─────────────────────────────────────────────
+#  SEGREDOS — nada daqui pode ir para o GitHub
+# ─────────────────────────────────────────────
+# Configuração real do agente: senhas de administrador, dos usuários locais e
+# do AnyDesk. Use config.example.json como modelo.
+config.json
+config.*.json
+!config.example.json
+
+# Variáveis de ambiente e credenciais avulsas
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+credenciais*
+senhas*
+
+# ─────────────────────────────────────────────
+#  INSTALADORES
+# ─────────────────────────────────────────────
+# Os instaladores das versões homologadas FICAM no repositório de propósito:
+# são builds específicos (Reader br, WinRAR br, OfficeSetup) que não se
+# reobtêm idênticos depois, e sem eles um clone não compila.
+#
+# Exceção: os que passam de 100 MB, limite de arquivo do GitHub. Esses são
+# baixados à parte — veja installers/README.md.
+installers/GoogleDriveSetup.exe
+installers/SlackSetup.exe
+
+# ─────────────────────────────────────────────
+#  ARTEFATOS DE BUILD
+# ─────────────────────────────────────────────
+# PyInstaller gera build/ e dist/ em cada projeto (raiz, agents/windows,
+# agents/windows/configurador, agents/windows/agente_leve). As regras valem em
+# qualquer nivel: sem a barra inicial, o padrao casa em qualquer subpasta.
+#
+# build/*/ e nao build/: o build/ da raiz guarda fonte (AgenteBlue.spec,
+# compilar.ps1). O PyInstaller escreve so em build/<nome do alvo>/, um nivel
+# abaixo -- e e isso que ignoramos.
+dist/
+build/*/
+build_log.txt
+*.manifest
+*.pyz
+*.pkg
+*.toc
+base_library.zip
+xref-*.html
+# Relatorio de avisos do PyInstaller. Entra por extensao, como os de cima,
+# porque "build/*/" tem barra e por isso vale so para o build/ da raiz -- nao
+# alcanca agents/windows/build/, onde os agentes sao compilados.
+warn-*.txt
+
+# PyInstaller: versionamos apenas os .spec, que sao fonte
+!*.spec
+
+# ─────────────────────────────────────────────
+#  PYTHON
+# ─────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
 develop-eggs/
-downloads/
 eggs/
 sdist/
-var/
 wheels/
 share/python-wheels/
 *.egg-info/
@@ -20,41 +74,43 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# PyInstaller
-*.manifest
-*.spec
-!AgenteBlue.spec
-
-# Installer Files (Heavy)
-apps/
-AGENTE_FINAL/
-
-# Logs
-*.log
-
-# Environments
+# Ambientes virtuais
 .venv/
-env/
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
 
-# IDEs
+# ─────────────────────────────────────────────
+#  ESPECÍFICO DO AGENTE BLUE
+# ─────────────────────────────────────────────
+# Papel de parede: imagem pesada e específica de cada cliente.
+assets/Fundo de Tela.*
+
+# Logs do agente
+*.log
+
+# ─────────────────────────────────────────────
+#  FERRAMENTAS E SISTEMA OPERACIONAL
+# ─────────────────────────────────────────────
 .vscode/
 .idea/
+.claude/
+Thumbs.db
+desktop.ini
+ehthumbs.db
+.DS_Store
+*~
+*.tmp
+*.bak
 
-# Agent Blue Specific
-Fundo de Tela.jpg
-
-# Configuração com segredos (senhas) — NÃO versionar.
-# Use config.example.json como modelo e crie seu config.json local.
-config.json
-
-# Instaladores grandes (>100 MB) — passam do limite do GitHub.
-# Mantenha-os na pasta .exe local; o build os embute a partir dela.
-.exe/GoogleDriveSetup.exe
-.exe/SlackSetup.exe
-
-# Build output (exe grande, distribuido fora do GitHub)
-dist/
+# ─────────────────────────────────────────────
+#  INSTALADOR DA VPN (perfil do pfSense)
+# ─────────────────────────────────────────────
+# Os demais instaladores sao binarios publicos de fornecedor e podem ser
+# versionados. Este nao: e um export do OpenVPN Client Export do pfSense e
+# carrega o perfil da NOSSA rede -- CA, endereco/porta do tunel e a chave
+# tls-auth/tls-crypt, que e segredo compartilhado. No repositorio, isso vira
+# credencial publicada. Cada maquina recebe o arquivo pelo pendrive.
+installers/openvpn-*.exe

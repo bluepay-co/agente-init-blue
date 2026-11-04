@@ -1,0 +1,1123 @@
+/* ============================================
+   Agente Blue — Setup Automático | style.css
+   Tema escuro industrial, acento azul
+   ============================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Nunito+Sans:wght@400;600&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-app:       #1a1a1e;
+  --bg-window:    #1e1e23;
+  --bg-card:      #26262d;
+  --bg-log:       #141417;
+  --bg-input:     #2c2c35;
+  --border:       #33333d;
+  --blue:         #1a8fff;
+  --blue-dim:     #1260bb;
+  --blue-glow:    rgba(26,143,255,0.25);
+  --text-primary: #e8e8ef;
+  --text-muted:   #7a7a8c;
+  --text-server:  #1a8fff;
+  --green:        #22c55e;
+  --green-glow:   rgba(34,197,94,0.2);
+  --yellow:       #f59e0b;
+  --red:          #ef4444;
+  --titlebar-bg:  #14141a;
+  --radius:       6px;
+  --font-title:   'Rajdhani', sans-serif;
+  --font-body:    'Nunito Sans', sans-serif;
+  --font-mono:    'JetBrains Mono', monospace;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-app);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  color: var(--text-primary);
+  /* Permite scroll se a janela for menor que o conteúdo */
+  overflow: auto;
+  background-image: radial-gradient(ellipse at 60% 0%, rgba(26,143,255,0.06) 0%, transparent 60%);
+}
+
+/* ── Janela ── */
+.window {
+  width: 520px;
+  /* Máximo 96% da altura visível — não corta em monitores com DPI alto */
+  max-height: 96vh;
+  background: var(--bg-window);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
+  overflow: hidden;
+  user-select: none;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Conteúdo — scroll interno se necessário ── */
+.content {
+  padding: 16px 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Scrollbar discreta no conteúdo */
+.content::-webkit-scrollbar { width: 4px; }
+.content::-webkit-scrollbar-track { background: transparent; }
+.content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Cabeçalho ── */
+.header {
+  text-align: center;
+  padding-bottom: 2px;
+}
+
+.app-title {
+  font-family: var(--font-title);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.app-subtitle {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  letter-spacing: 0.03em;
+}
+
+.app-version {
+  font-size: 10px;
+  color: var(--blue);
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  opacity: 0.8;
+}
+
+/* ── Logo ── */
+.logo-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.app-logo {
+  width: 54px;
+  height: 54px;
+  filter: drop-shadow(0 0 12px var(--blue-glow));
+  animation: logo-float 4s ease-in-out infinite;
+}
+
+@keyframes logo-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+/* ── Card de etapas ── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+}
+
+.card-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+/* ── Opções ── */
+.opt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.opt-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.opt-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.opt-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ── Switch Toggle (iOS style) ── */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: var(--bg-input);
+  transition: .3s;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background-color: var(--text-muted);
+  transition: .3s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: var(--blue-dim);
+  border-color: var(--blue);
+}
+
+input:checked + .slider:before {
+  transform: translateX(16px);
+  background-color: #fff;
+  box-shadow: 0 0 8px var(--blue-glow);
+}
+
+.module-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.module-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Indicador de estado circular */
+.custom-radio {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--text-muted);
+  flex-shrink: 0;
+  position: relative;
+  transition: border-color 0.3s, background 0.3s;
+}
+
+.custom-radio.running {
+  border-color: var(--blue);
+  animation: pulse-blue 1s ease-in-out infinite;
+}
+
+.custom-radio.done {
+  border-color: var(--green);
+  background: var(--green);
+}
+.custom-radio.done::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.custom-radio.error {
+  border-color: var(--red);
+  background: var(--red);
+}
+.custom-radio.error::after {
+  content: '✕';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 7px;
+  color: #fff;
+  font-weight: bold;
+}
+
+@keyframes pulse-blue {
+  0%, 100% { box-shadow: 0 0 0 0 var(--blue-glow); }
+  50%       { box-shadow: 0 0 0 4px transparent; border-color: #5bb8ff; }
+}
+
+.module-text {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.3;
+  flex: 1;
+}
+
+.module-text strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.step-badge {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  padding: 2px 7px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--bg-input);
+  white-space: nowrap;
+  transition: all 0.3s;
+}
+
+.step-badge.running { border-color: var(--blue);   color: var(--blue);   background: rgba(26,143,255,0.1); }
+.step-badge.done    { border-color: var(--green);  color: var(--green);  background: var(--green-glow); }
+.step-badge.error   { border-color: var(--red);    color: var(--red);    background: rgba(239,68,68,0.1); }
+.step-badge.warn    { border-color: var(--yellow); color: var(--yellow); background: rgba(245,158,11,0.1); }
+
+/* ── Progresso geral ── */
+.progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.progress-bar-wrap {
+  width: 100%;
+  height: 7px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--blue-dim), var(--blue));
+  border-radius: 4px;
+  transition: width 0.5s ease;
+  box-shadow: 0 0 8px var(--blue-glow);
+}
+
+.progress-bar.complete {
+  background: linear-gradient(90deg, #16a34a, var(--green));
+  box-shadow: 0 0 8px var(--green-glow);
+}
+
+.progress-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-align: center;
+  min-height: 14px;
+  transition: color 0.3s;
+}
+
+
+/* ── Botão Executar ── */
+.btn-executar {
+  width: 100%;
+  padding: 11px;
+  background: var(--blue);
+  color: #fff;
+  font-family: var(--font-title);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
+  box-shadow: 0 4px 18px rgba(26,143,255,0.35);
+  flex-shrink: 0;
+}
+
+.btn-executar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.12) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+.btn-executar:hover:not(:disabled) {
+  background: #2299ff;
+  box-shadow: 0 6px 24px rgba(26,143,255,0.5);
+  transform: translateY(-1px);
+}
+
+.btn-executar:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 10px rgba(26,143,255,0.3);
+}
+
+.btn-executar:disabled {
+  background: var(--bg-card);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-executar.success {
+  background: #16a34a;
+  box-shadow: 0 4px 18px var(--green-glow);
+}
+
+/* ── Card de softwares com progresso individual ── */
+.sw-card { margin-top: -4px; }
+
+#sw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sw-item {
+  padding: 7px 9px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  transition: border-color 0.3s, background 0.3s;
+}
+
+.sw-item.active   { border-color: var(--blue);  background: rgba(26,143,255,0.06); }
+.sw-item.finished { border-color: var(--green); background: rgba(34,197,94,0.06); }
+.sw-item.sw-error { border-color: var(--red);   background: rgba(239,68,68,0.06); }
+
+.sw-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.sw-checkbox {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  margin-right: 12px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s;
+  background: var(--bg-card);
+}
+
+.sw-checkbox:checked {
+  background: var(--blue);
+  border-color: var(--blue);
+  box-shadow: 0 0 8px var(--blue-glow);
+}
+
+.sw-checkbox:checked::after {
+  content: '✔';
+  position: absolute;
+  font-size: 10px;
+  color: #fff;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.sw-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sw-status {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-muted);
+  transition: color 0.3s;
+}
+.sw-status.downloading { color: var(--blue); }
+.sw-status.installing  { color: var(--yellow); }
+.sw-status.done        { color: var(--green); font-weight: 600; }
+.sw-status.error       { color: var(--red); }
+
+.sw-bar-wrap {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-card);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.sw-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  transition: width 0.4s ease, background 0.3s;
+  background: var(--border);
+}
+
+.sw-bar.downloading { background: linear-gradient(90deg, var(--blue-dim), var(--blue)); box-shadow: 0 0 6px var(--blue-glow); }
+.sw-bar.installing  { background: linear-gradient(90deg, #b45309, var(--yellow)); animation: pulse-yellow 0.8s ease-in-out infinite; }
+.sw-bar.done        { background: linear-gradient(90deg, #16a34a, var(--green)); box-shadow: 0 0 6px var(--green-glow); }
+.sw-bar.error       { background: var(--red); }
+
+@keyframes pulse-yellow {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.65; }
+}
+
+/* Banner de conclusão */
+.sw-done-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 7px 12px;
+  border-radius: var(--radius);
+  background: rgba(34,197,94,0.12);
+  border: 1px solid rgba(34,197,94,0.35);
+  color: var(--green);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  animation: fadeInUp 0.4s ease;
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================
+   Gerenciar Usuários (v3.0)
+   ============================================ */
+
+/* Views preservam o mesmo espaçamento vertical do .content (flex + gap).
+   TODA view nova precisa entrar aqui: o showView() aplica display:flex, e sem
+   o flex-direction:column os cards se alinham em LINHA e a aba vira um amasso
+   horizontal. Foi o que aconteceu com a #viewMonitor quando ela foi criada. */
+#viewMain, #viewUsers, #viewPrograms, #viewMonitor, #viewVpn {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Abas de navegação ── */
+.nav-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.nav-tab {
+  flex: 1;
+  padding: 8px 10px;
+  font-family: var(--font-title);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.nav-tab:hover { color: var(--text-primary); border-color: var(--blue-dim); }
+
+.nav-tab.active {
+  color: #fff;
+  background: var(--blue-dim);
+  border-color: var(--blue);
+  box-shadow: 0 0 10px var(--blue-glow);
+}
+
+/* ── Formulário de criação ── */
+.user-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.u-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.u-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue-glow);
+}
+
+.u-input::placeholder { color: var(--text-muted); }
+
+.u-role {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.u-role input { width: 15px; height: 15px; accent-color: var(--blue); cursor: pointer; }
+
+/* ── Botões do painel ── */
+.btn-user {
+  padding: 7px 12px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-user:hover { border-color: var(--blue); color: #fff; }
+
+.btn-user.primary {
+  background: var(--blue-dim);
+  border-color: var(--blue);
+  color: #fff;
+}
+.btn-user.primary:hover { background: #2299ff; }
+
+.btn-user.danger:hover { border-color: var(--red); color: var(--red); }
+
+.btn-refresh {
+  padding: 3px 9px;
+  font-size: 14px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-refresh:hover { color: var(--blue); border-color: var(--blue); }
+
+/* ── Mensagens ── */
+.u-msg {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  margin-top: 6px;
+  min-height: 13px;
+  color: var(--text-muted);
+}
+.u-msg.ok   { color: var(--green); }
+.u-msg.err  { color: var(--red); }
+.u-msg.info { color: var(--blue); }
+.u-msg.warn { color: var(--yellow); }
+
+/* ── Nome da máquina (aba Usuários) ── */
+.host-atual {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.host-atual strong {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+.host-rotulo {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ── Lista ── */
+.user-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.user-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.u-loading {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 10px 0;
+}
+
+.u-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  padding: 8px 10px;
+  transition: border-color 0.2s;
+}
+.u-item:hover { border-color: var(--blue-dim); }
+
+.u-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.u-main { min-width: 0; flex: 1; }
+
+.u-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.u-path {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.u-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ── Badges de cargo/estado ── */
+.u-badge {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--bg-card);
+  white-space: nowrap;
+}
+.u-badge.admin { color: var(--blue);   border-color: var(--blue-dim);   background: rgba(26,143,255,0.1); }
+.u-badge.lock  { color: var(--yellow); border-color: var(--yellow);     background: rgba(245,158,11,0.1); }
+.u-badge.on    { color: var(--green);  border-color: var(--green);      background: var(--green-glow); }
+.u-badge.off   { color: var(--red);    border-color: var(--red);        background: rgba(239,68,68,0.1); }
+
+/* ── Painel inline (editar/excluir) ── */
+.u-panel:empty { display: none; }
+
+.u-edit, .u-del {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  animation: fadeInUp 0.25s ease;
+}
+
+.u-edit-title, .u-del-title {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.u-del-title strong { color: var(--red); }
+
+.u-edit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ============================================
+   Desinstalar Programas (v3.0)
+   ============================================ */
+.prog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.prog-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--blue);
+}
+
+/* Lista com scroll interno (pode ter 100+ programas) */
+.prog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.prog-list::-webkit-scrollbar { width: 5px; }
+.prog-list::-webkit-scrollbar-track { background: transparent; }
+.prog-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.prog-item {
+  padding: 7px 9px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  transition: border-color 0.2s, background 0.2s;
+}
+.prog-item:hover    { border-color: var(--blue-dim); }
+.prog-item.finished { border-color: var(--green); background: rgba(34,197,94,0.06); }
+
+.prog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prog-check-wrap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  min-width: 0;
+  flex: 1;
+}
+
+.prog-cb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  position: relative;
+  background: var(--bg-card);
+  transition: all 0.2s;
+}
+.prog-cb:checked { background: var(--blue); border-color: var(--blue); box-shadow: 0 0 8px var(--blue-glow); }
+.prog-cb:checked::after {
+  content: '✔';
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 10px; color: #fff;
+}
+
+.prog-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prog-status {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.prog-status.downloading { color: var(--blue); }
+.prog-status.installing  { color: var(--yellow); }
+.prog-status.done        { color: var(--green); font-weight: 600; }
+.prog-status.error       { color: var(--red); }
+
+.prog-meta {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  margin: 3px 0 0 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prog-bar-wrap {
+  width: 100%;
+  height: 3px;
+  background: var(--bg-card);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 5px;
+}
+.prog-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: var(--border);
+  transition: width 0.4s ease, background 0.3s;
+}
+.prog-bar.downloading { background: linear-gradient(90deg, var(--blue-dim), var(--blue)); }
+.prog-bar.installing  { background: linear-gradient(90deg, #b45309, var(--yellow)); animation: pulse-yellow 0.8s ease-in-out infinite; }
+.prog-bar.done        { background: linear-gradient(90deg, #16a34a, var(--green)); }
+.prog-bar.error       { background: var(--red); }
+
+/* Botão de desinstalar (vermelho) */
+.btn-uninstall {
+  background: var(--red);
+  box-shadow: 0 4px 18px rgba(239,68,68,0.35);
+}
+.btn-uninstall:hover:not(:disabled) {
+  background: #f75c5c;
+  box-shadow: 0 6px 24px rgba(239,68,68,0.5);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ABA MONITORAMENTO (BlueControl IT)
+   Veio do style.css do ConfiguradorAgente, que era um programa separado.
+   Dos 33 seletores dele, 14 foram DESCARTADOS por já existirem aqui -- eram
+   cópias: .card era igual byte a byte, e .window/.header/.app-title eram o
+   chrome da janela, que agora é o do próprio agente. Ficaram só os de uso
+   exclusivo desta aba.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.app-logo-fallback {
+  width: 46px; height: 46px; border-radius: 12px;
+  background: linear-gradient(135deg, var(--blue), var(--blue-dim));
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-title); font-weight: 700; font-size: 22px; color: #fff;
+  box-shadow: 0 0 16px var(--blue-glow);
+  animation: logo-float 4s ease-in-out infinite;
+}
+/* ── Status atual ── */
+.status-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+.status-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green-glow); }
+.status-dot.off { background: var(--red); }
+.status-dot.none { background: var(--text-muted); }
+.status-text strong { color: var(--text-primary); }
+.status-text small { display: block; color: var(--text-muted); font-family: var(--font-mono); font-size: 10.5px; margin-top: 1px; }
+/* ── Tabs (buscar / cadastrar) ── */
+.tabs {
+  display: flex;
+  background: var(--bg-input);
+  border-radius: var(--radius);
+  padding: 3px;
+  gap: 3px;
+  margin-bottom: 12px;
+}
+.tab-btn {
+  flex: 1;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.tab-btn.active {
+  background: var(--blue);
+  color: #fff;
+}
+.tab-panel { display: none; flex-direction: column; gap: 10px; }
+.tab-panel.active { display: flex; }
+/* ── Campos ── */
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label {
+  font-size: 10.5px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.field input, .field select {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 10px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.field input:focus, .field select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue-glow);
+}
+.field input::placeholder { color: var(--text-muted); }
+.field-row { display: flex; gap: 8px; }
+.field-row .field { flex: 1; min-width: 0; }
+/* ── Resultados de busca ── */
+.resultados {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 160px; overflow-y: auto;
+}
+.resultado-item {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 7px 9px; border-radius: 5px; border: 1px solid var(--border);
+  background: var(--bg-input); cursor: pointer; transition: border-color .15s, background .15s;
+}
+.resultado-item:hover { border-color: var(--blue); }
+.resultado-item.selected { border-color: var(--blue); background: rgba(26,143,255,0.1); }
+.resultado-nome { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
+.resultado-meta { font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono); }
+.resultado-vazio { font-size: 11.5px; color: var(--text-muted); font-style: italic; padding: 6px 2px; }
+.selecionado-banner {
+  display: none;
+  align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 5px;
+  background: rgba(34,197,94,0.1); border: 1px solid var(--green);
+  font-size: 12px;
+}
+.selecionado-banner.show { display: flex; }
+.selecionado-banner strong { color: var(--text-primary); }
+/* ── Log ── */
+.log-box {
+  background: var(--bg-log);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  height: 130px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.7;
+  scroll-behavior: smooth;
+  display: none;
+}
+.log-box.show { display: block; }
+.log-box::-webkit-scrollbar { width: 4px; }
+.log-box::-webkit-scrollbar-track { background: transparent; }
+.log-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.log-line { display: block; }
+.log-line.ok { color: var(--green); }
+.log-line.info { color: var(--blue); }
+.log-line.warn { color: var(--yellow); }
+.log-line.err { color: var(--red); }
+.log-line.muted { color: var(--text-muted); }
+.hint { font-size: 10.5px; color: var(--text-muted); line-height: 1.5; }
+
+/* Modificadores de erro que a aba Setup não usa (o setProgress dela só tem
+   'complete'), então não existiam: puramente aditivos. */
+.progress-bar.erro { background: var(--red); }
+.btn-executar.erro { background: var(--red); box-shadow: 0 4px 18px rgba(239,68,68,.3); }
+
+/* A .progress-section do agente é sempre visível; a desta aba só aparece
+   quando a instalação começa. Escopado por id para não mexer na do Setup. */
+#monProgressSection      { display: none; }
+#monProgressSection.show { display: flex; }
+
+/* O rótulo do card que carrega uma ação à direita ("Servidor  mostrar").
+   O .card-label do agente é um <p> comum; no configurador ele era flex, e é o
+   flex que empurra a ação para a direita. Escopado na aba para não alterar o
+   alinhamento dos rótulos das outras três. */
+#viewMonitor .card-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* O "mostrar/ocultar" do bloco Servidor. Era style inline no configurador;
+   o .card-label é caixa-alta com tracking, e a ação precisa escapar disso. */
+.card-label-acao {
+  cursor: pointer;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--blue);
+}
+.card-label-acao:hover { text-decoration: underline; }
+
+/* Campo preenchido sozinho (ex: nº de série lido da BIOS). Fica visivelmente
+   diferente do digitado: o técnico precisa notar que já veio algo ali antes de
+   mandar pro cadastro. */
+.campo-nota {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--green);
+  margin-left: 6px;
+}
+.field input.auto-detectado {
+  border-color: var(--green);
+  font-family: var(--font-mono);
+}
+
+/* ── Zona de perigo (excluir máquina + limpar agente) ────────────────────── */
+/* Separada por uma linha e recuada do resto do card: o botão fica no mesmo
+   cartão da situação atual, e sem essa divisão ele parece só mais uma ação. */
+.zona-perigo {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(239,68,68,0.25);
+}
+.btn-perigo {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(239,68,68,0.5);
+  background: rgba(239,68,68,0.1);
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-perigo:hover:not(:disabled) { background: var(--red); color: #fff; }
+.btn-perigo:disabled { opacity: 0.55; cursor: not-allowed; }
+.zona-perigo .hint { margin-top: 8px; }

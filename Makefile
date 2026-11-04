@@ -4,33 +4,39 @@
 #
 # Uso rapido:
 #   make            -> compila ONEDIR  (dev/testes)   dist\AgenteBlue\AgenteBlue.exe
-#   make onefile    -> compila ONEFILE (entrega)      dist\AgenteBlue.exe   <- use no Sandbox
-#   make assets     -> atualiza HTML/JS/CSS sem recompilar
+#   make onefile    -> compila ONEFILE (entrega)      dist\AgenteBlue.exe
+#   make assets     -> atualiza web/, assets/ e installers/ sem recompilar
 #   make run        -> executa o agente compilado (onedir)
-#   make clean      -> remove dist/ e build/
+#   make dev        -> roda direto do codigo-fonte, sem compilar
+#   make clean      -> remove dist/ e __pycache__
 
 PS = powershell -ExecutionPolicy Bypass
+COMPILAR = build/compilar.ps1
 
-.PHONY: build onefile assets run clean help
+.PHONY: build onefile assets run dev clean help
 
 build:
-	$(PS) -File compilar.ps1
+	$(PS) -File $(COMPILAR)
 
 onefile:
-	$(PS) -File compilar.ps1 -Onefile
+	$(PS) -File $(COMPILAR) -Onefile
 
 assets:
-	$(PS) -File compilar.ps1 -AssetsOnly
+	$(PS) -File $(COMPILAR) -AssetsOnly
 
 run:
 	$(PS) -Command "Start-Process dist\AgenteBlue\AgenteBlue.exe"
 
+dev:
+	python src/agente.py
+
 clean:
-	$(PS) -Command "Remove-Item -Recurse -Force dist,build -ErrorAction SilentlyContinue"
+	$(PS) -Command "Remove-Item -Recurse -Force dist,src\__pycache__ -ErrorAction SilentlyContinue"
 
 help:
 	@echo make          - compila ONEDIR  (dev)      dist\AgenteBlue\
 	@echo make onefile  - compila ONEFILE (entrega)  dist\AgenteBlue.exe
-	@echo make assets   - atualiza html/js/css sem recompilar
+	@echo make assets   - atualiza web/assets/installers sem recompilar
 	@echo make run      - executa o agente (onedir)
-	@echo make clean    - remove dist e build
+	@echo make dev      - roda do codigo-fonte
+	@echo make clean    - remove dist e caches

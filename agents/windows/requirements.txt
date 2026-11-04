@@ -1,0 +1,19 @@
+# ── Agentes Windows (rodam nas máquinas monitoradas) ───────
+psutil
+requests
+wmi
+pywin32
+
+# ── BlueControl_Remote (acesso remoto) ──────────────────────
+mss
+pyautogui
+websockets
+av
+pillow
+
+# O instalador grafico (Instalar_bluecontrol.py, que pedia pywebview) foi
+# substituido pela aba Monitoramento do AgenteBlue.exe -- ver
+# src/monitoramento.py. Nenhuma dependencia extra: a aba usa so a stdlib.
+
+# ── Build dos .exe ──────────────────────────────────────────
+pyinstaller

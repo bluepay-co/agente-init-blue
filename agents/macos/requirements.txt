@@ -1,0 +1,6 @@
+# ── Agentes macOS (rodam nas máquinas monitoradas) ─────────
+psutil
+requests
+
+# ── Instalador (instalar_bluecontrol_mac.py) ────────────────
+pywebview
