@@ -30,22 +30,34 @@ except ImportError:
 CONFIG_PATH = Path(r"C:\BlueControl\config.json")
 LOG_PATH    = Path(r"C:\BlueControl\metricas.log")
 
-# ─── Logging ───────────────────────────────────────────────────────────────
-os.makedirs(r"C:\BlueControl", exist_ok=True)
-logging.basicConfig(
-    filename=str(LOG_PATH), level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-)
+# ─── Logging (lazy — não toca disco no import para não travar o serviço) ──
 log = logging.getLogger("bluecontrol_metricas")
-try:
-    _con = logging.StreamHandler(
-        _io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
-    )
-except AttributeError:
-    _con = logging.StreamHandler(sys.stdout)
-_con.setLevel(logging.INFO)
-_con.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%H:%M:%S"))
-log.addHandler(_con)
+log.setLevel(logging.INFO)
+_log_configurado = False
+
+def _garantir_logging():
+    global _log_configurado
+    if _log_configurado:
+        return
+    _log_configurado = True
+    try:
+        os.makedirs(r"C:\BlueControl", exist_ok=True)
+        fh = logging.FileHandler(str(LOG_PATH), encoding="utf-8")
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S"))
+        log.addHandler(fh)
+    except Exception:
+        pass
+    try:
+        _con = logging.StreamHandler(
+            _io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8",
+                              errors="replace", line_buffering=True))
+    except AttributeError:
+        _con = logging.StreamHandler(sys.stdout)
+    _con.setLevel(logging.INFO)
+    _con.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%H:%M:%S"))
+    log.addHandler(_con)
 
 # ─── WMI ───────────────────────────────────────────────────────────────────
 try:
@@ -239,12 +251,19 @@ def coletar_metricas() -> dict:
 
     # Detect IPs
     ip_local = None
+    ip_vpn = None
     for iface, addrs in psutil.net_if_addrs().items():
         for addr in addrs:
             if addr.family == socket.AF_INET:
                 ip = addr.address
-                if ip.startswith('192.168.') and ip != '127.0.0.1':
+                if ip.startswith('192.168.'):
                     ip_local = ip
+                elif ip.startswith('10.'):
+                    ip_vpn = ip
+                elif ip.startswith('172.'):
+                    segundo = int(ip.split('.')[1])
+                    if 16 <= segundo <= 31:
+                        ip_vpn = ip
 
     try:
         procs = []
@@ -283,6 +302,7 @@ def coletar_metricas() -> dict:
         "top_processos":       json.dumps(top_processos, ensure_ascii=False),
         "hostname":            socket.gethostname(),
         "ip_local":            ip_local,
+        "ip_vpn":              ip_vpn,
         "agente_hash":         _AGENTE_HASH,
     }
 
@@ -707,6 +727,7 @@ def verificar_atualizacao(config: dict) -> bool:
 # ─── Loop de coleta (compartilhado entre serviço e modo direto) ──────────────
 def _loop_coleta(stop_event=None):
     """Executa o loop principal. stop_event: win32event handle ou None."""
+    _garantir_logging()
     log.info("==========================================")
     log.info("  BlueControl IT - Agente v3")
     log.info(f"  Maquina: {socket.gethostname()}")
@@ -783,6 +804,7 @@ if _SVC_OK:
             win32event.SetEvent(self._stop_event)
 
         def SvcDoRun(self):
+            self.ReportServiceStatus(win32service.SERVICE_RUNNING)
             servicemanager.LogMsg(
                 servicemanager.EVENTLOG_INFORMATION_TYPE,
                 servicemanager.PYS_SERVICE_STARTED,
