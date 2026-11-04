@@ -39,6 +39,8 @@ for _f in glob.glob(os.path.join(ROOT, 'assets', '*')):
 # installers\ ao lado do exe e usa esta copia como fallback.
 for _f in glob.glob(os.path.join(ROOT, 'installers', '*.exe')):
     datas.append((_f, 'installers'))
+for _f in glob.glob(os.path.join(ROOT, 'installers', '*.ovpn')):
+    datas.append((_f, 'installers'))
 
 # Agentes de monitoramento (aba Monitoramento). Ficam FORA do exe por padrao:
 # sao ~68 MB (o BlueControl_Remote carrega av/numpy pro streaming de tela) e

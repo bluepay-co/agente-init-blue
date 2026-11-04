@@ -107,7 +107,8 @@ if ($AssetsOnly) {
 
 # ── Build PyInstaller em pasta temporária ───────────────────────────────
 Write-Step '2/4' "Compilando ($modo)..."
-$work    = Join-Path $env:TEMP 'agenteblue_build'
+$tempDir = if ($env:TEMP) { $env:TEMP } else { '/tmp' }
+$work = Join-Path $tempDir 'agenteblue_build'
 $tmpDist = Join-Path $env:TEMP 'agenteblue_dist'
 Remove-Item -Recurse -Force $work, $tmpDist -ErrorAction SilentlyContinue
 
