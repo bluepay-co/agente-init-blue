@@ -338,10 +338,11 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             otimizar = params.get("otimizacao", True)
             sw_lista = params.get("softwares_selecionados", [])
             integridade = params.get("verificar_integridade", True)
+            wallpaper = params.get("wallpaper", True)
 
             threading.Thread(
                 target=run_automation,
-                args=(instalar, otimizar, sw_lista, integridade),
+                args=(instalar, otimizar, sw_lista, integridade, wallpaper),
                 daemon=True,
             ).start()
             self._json_response({"ok": True})
@@ -1098,6 +1099,33 @@ def _etapa_wallpaper() -> bool:
     _run_cmd(f'reg add "{reg_desk}" /v TileWallpaper /t REG_SZ /d 0 /f',
              label="Wallpaper: sem lado a lado")
 
+    # Aplica imediatamente via SystemParametersInfo (P/Invoke)
+    script_dir = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AgenteBlue"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    ps_file = script_dir / "set_wallpaper.ps1"
+    ps_file.write_text(
+        'Add-Type -TypeDefinition @"\n'
+        'using System.Runtime.InteropServices;\n'
+        'public class Wallpaper {\n'
+        '    [DllImport("user32.dll", CharSet=CharSet.Unicode)]\n'
+        '    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);\n'
+        '}\n'
+        '"@\n'
+        f'[Wallpaper]::SystemParametersInfo(0x0014, 0, "{wallpaper_path}", 3)\n',
+        encoding="utf-8"
+    )
+    info = _logged_user()
+    if info:
+        cmd_file = script_dir / "set_wallpaper.cmd"
+        cmd_file.write_text(
+            f'@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "{ps_file}"\r\n',
+            encoding="ascii"
+        )
+        _run_as_logged_user(str(cmd_file), label="Aplicar wallpaper no usuário logado")
+    else:
+        _run_cmd(f'powershell -NoProfile -ExecutionPolicy Bypass -File "{ps_file}"',
+                 label="Aplicar wallpaper")
+
     _refresh_user_session(restart_explorer=False)
 
     _etapa_fim("wallpaper", ok, 35)
@@ -1327,10 +1355,13 @@ def _etapa_otimizacao() -> bool:
     # ── Acessibilidade > Efeitos Visuais: EFEITOS DE TRANSPARÊNCIA = OFF ──────
     _run_cmd(f'reg add "{themes}" /v EnableTransparency /t REG_DWORD /d 0 /f', label="Efeitos de transparência: OFF")
 
-    # Replica "Ajustar para melhor desempenho": VisualFXSetting=2 é o master e
-    # UserPreferencesMask 9012038010000000 é a máscara que o Windows grava nesse modo.
-    _run_cmd(f'reg add "{visualfx}" /v VisualFXSetting /t REG_DWORD /d 2 /f', label="Efeitos visuais: melhor desempenho")
-    _run_cmd(f'reg add "{desktop}" /v UserPreferencesMask /t REG_BINARY /d 9012038010000000 /f', label="Efeitos de animação: OFF (máscara)")
+    # Personalizado: desliga animações mas mantém Font Smoothing (ClearType).
+    # VisualFXSetting=3 = "Personalizado" (respeita a máscara individual).
+    # Byte 1 bit 1 = Font Smoothing; 9e = 9012... com esse bit ligado.
+    _run_cmd(f'reg add "{visualfx}" /v VisualFXSetting /t REG_DWORD /d 3 /f', label="Efeitos visuais: personalizado")
+    _run_cmd(f'reg add "{desktop}" /v UserPreferencesMask /t REG_BINARY /d 9e12038010000000 /f', label="Efeitos de animação: OFF (mantém ClearType)")
+    _run_cmd(f'reg add "{desktop}" /v FontSmoothing /t REG_SZ /d 2 /f', label="Font Smoothing: ON")
+    _run_cmd(f'reg add "{desktop}" /v FontSmoothingType /t REG_DWORD /d 2 /f', label="ClearType: ON")
     _run_cmd(f'reg add "{winmetrics}" /v MinAnimate /t REG_SZ /d 0 /f', label="Animação de janela: OFF")
     _run_cmd(f'reg add "{advanced}" /v TaskbarAnimations /t REG_DWORD /d 0 /f', label="Animações da barra de tarefas: OFF")
 
@@ -1478,7 +1509,8 @@ def _etapa_integridade() -> bool:
 # ══════════════════════════════════════════════
 
 def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
-                   sw_lista: list = None, verificar_integridade: bool = True):
+                   sw_lista: list = None, verificar_integridade: bool = True,
+                   wallpaper: bool = True):
     inicio = datetime.now()
     erros: List[str] = []
 
@@ -1496,7 +1528,12 @@ def run_automation(instalar_softwares: bool = True, otimizacao: bool = True,
         _log("  Etapa ignorada pelo usuário.", "muted")
         _etapa_fim("downloads", True, 28)
 
-    _etapa_wallpaper()          # wallpaper: falha não é crítica
+    if wallpaper:
+        _etapa_wallpaper()
+    else:
+        _log("\n  [INFO] Pulando wallpaper conforme solicitado.", "info")
+        _etapa_inicio("wallpaper", 30)
+        _etapa_fim("wallpaper", True, 35)
     if not _etapa_rede():
         erros.append("rede")
     if not _etapa_smb():

@@ -205,6 +205,7 @@ function iniciarAgente() {
       apiPost('/api/execute', {
         instalar_softwares: document.getElementById('chkSoftwares').checked,
         softwares_selecionados: selectedSW,
+        wallpaper: document.getElementById('chkWallpaper').checked,
         otimizacao: document.getElementById('chkOtimizacao').checked,
         verificar_integridade: document.getElementById('chkIntegridade').checked
       }).catch(() => appendLog('[!] Falha ao contactar o servidor Python.', 'err'));
