@@ -309,6 +309,8 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response(programas.listar())
         elif self._rota() == "/api/monitoramento/status":
             self._json_response(monitoramento.status())
+        elif self._rota() == "/api/monitoramento/progresso":
+            self._json_response(monitoramento.progresso_atual())
         elif self._rota() == "/api/vpn/status":
             self._json_response(vpn.status())
         else:
@@ -394,6 +396,34 @@ class AgenteHandler(http.server.SimpleHTTPRequestHandler):
                 target=monitoramento.instalar, args=(p,), daemon=True,
             ).start()
             self._json_response({"ok": True})
+
+        elif self._rota() == "/api/monitoramento/cadastrar_e_instalar":
+            p = self._read_json_body()
+            url_api  = p.get("url_api", "")
+            token    = p.get("token_agente", "")
+            intervalo = p.get("intervalo_segundos", "")
+            patrimonio = p.get("patrimonio")  # já definido se veio da busca
+
+            if not patrimonio:
+                # Cadastrar nova máquina primeiro
+                dados_cad = {k: v for k, v in p.items()
+                             if k not in ("url_api", "token_agente",
+                                          "intervalo_segundos", "patrimonio")}
+                st, data = monitoramento.cadastrar(url_api, token, dados_cad)
+                patrimonio = (data.get("patrimonio")
+                              or data.get("patrimonio_interno"))
+                if not patrimonio:
+                    self._json_response(data, st or 502)
+                    return
+
+            threading.Thread(
+                target=monitoramento.instalar,
+                args=({"patrimonio": patrimonio, "url_api": url_api,
+                       "token_agente": token,
+                       "intervalo_segundos": intervalo},),
+                daemon=True,
+            ).start()
+            self._json_response({"ok": True, "patrimonio": patrimonio})
 
         elif self._rota() == "/api/monitoramento/excluir":
             p = self._read_json_body()

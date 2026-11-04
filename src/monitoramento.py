@@ -33,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import time
 import urllib.error
@@ -89,19 +90,63 @@ def init(broadcast, registrar, resolver, no_window):
 #  EMISSÃO DE EVENTOS (canal da aba Monitoramento)
 # ══════════════════════════════════════════════
 
+# Estado consultável por polling — alternativa ao SSE que não depende de
+# EventSource entregar os eventos. O frontend consulta /api/monitoramento/progresso.
+_estado_install: dict = {"pct": 0, "texto": "", "ok": False, "erro": False,
+                         "logs": [], "ativo": False}
+_estado_lock = __import__("threading").Lock()
+
+
+def progresso_atual() -> dict:
+    """Snapshot do estado atual da instalação, para polling."""
+    with _estado_lock:
+        copia = dict(_estado_install)
+        copia["logs"] = list(_estado_install["logs"])
+        return copia
+
+
 def _log(msg: str, tipo: str = "muted"):
     _broadcast({"type": "mon_log", "msg": msg, "tipo": tipo})
     _registrar(f"[monitoramento] {msg}")
+    with _estado_lock:
+        _estado_install["logs"].append({"msg": msg, "tipo": tipo})
 
 
 def _progresso(pct: int, texto: str, ok: bool = False, erro: bool = False):
     _broadcast({"type": "mon_progresso", "pct": pct, "texto": texto,
                 "ok": ok, "erro": erro})
+    with _estado_lock:
+        _estado_install.update(pct=pct, texto=texto, ok=ok, erro=erro)
+
+
+def _iniciar_progresso():
+    """Reseta o estado antes de uma nova instalação/limpeza."""
+    with _estado_lock:
+        _estado_install.update(pct=0, texto="", ok=False, erro=False,
+                               logs=[], ativo=True)
+
+
+def _finalizar_progresso():
+    with _estado_lock:
+        _estado_install["ativo"] = False
 
 
 # ══════════════════════════════════════════════
 #  API DO BLUECONTROL
 # ══════════════════════════════════════════════
+
+def _porta_aberta(url: str, timeout: float = 3) -> bool:
+    """Testa se o host:porta da URL aceita conexão TCP."""
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url)
+        host = p.hostname or ""
+        port = p.port or 80
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
 
 def normalizar_url(url: str) -> Tuple[str, str]:
     """Devolve (url_limpa, erro). A URL vem de um campo de texto que o técnico
@@ -154,8 +199,16 @@ def buscar(url_api: str, token: str, q: str) -> Tuple[int, dict]:
     if not token:
         return 0, {"detail": "Token do agente em branco — preencha o campo em "
                              "\"Servidor\"."}
-    alvo = f"{base}/api/agente/equipamentos/buscar?q={urllib.parse.quote(q or '')}"
-    return _http_json("GET", alvo, token)
+    sufixo = f"/api/agente/equipamentos/buscar?q={urllib.parse.quote(q or '')}"
+    base_padrao, _ = normalizar_url(DEFAULT_URL_API)
+    url_prim = base_padrao or base
+    status, data = _http_json("GET", url_prim + sufixo, token)
+    if status != 0:
+        return status, data
+    if base != url_prim:
+        _registrar(f"[mon] {url_prim} não respondeu na busca, tentando {base}")
+        return _http_json("GET", base + sufixo, token)
+    return status, data
 
 
 def excluir(url_api: str, token: str, patrimonio: str) -> Tuple[int, dict]:
@@ -178,9 +231,21 @@ def excluir(url_api: str, token: str, patrimonio: str) -> Tuple[int, dict]:
                              "Remova pelo painel."}
     # safe="" para escapar a barra também: quote() a preserva por padrão, e um
     # patrimônio como "PER/0087" viraria outro caminho e devolveria 404.
-    alvo = (f"{base}/api/agente/equipamentos/"
-            f"{urllib.parse.quote(patrimonio.strip(), safe='')}")
-    return _http_json("DELETE", alvo, token, {"numero_serie": serie})
+    sufixo = (f"/api/agente/equipamentos/"
+              f"{urllib.parse.quote(patrimonio.strip(), safe='')}")
+    corpo = {"numero_serie": serie}
+    base_padrao, _ = normalizar_url(DEFAULT_URL_API)
+
+    url_prim = base_padrao or base
+    status, data = _http_json("DELETE", url_prim + sufixo, token, corpo)
+    if status != 0:
+        return status, data
+    if base != url_prim:
+        _registrar(f"[mon] {url_prim} não respondeu, tentando {base}")
+        status2, data2 = _http_json("DELETE", base + sufixo, token, corpo)
+        if status2 != 0:
+            return status2, data2
+    return status, data
 
 
 def cadastrar(url_api: str, token: str, dados: dict) -> Tuple[int, dict]:
@@ -190,7 +255,16 @@ def cadastrar(url_api: str, token: str, dados: dict) -> Tuple[int, dict]:
     if not token:
         return 0, {"detail": "Token do agente em branco — preencha o campo em "
                              "\"Servidor\"."}
-    return _http_json("POST", f"{base}/api/agente/equipamentos", token, dados)
+    sufixo = "/api/agente/equipamentos"
+    base_padrao, _ = normalizar_url(DEFAULT_URL_API)
+    url_prim = base_padrao or base
+    status, data = _http_json("POST", url_prim + sufixo, token, dados)
+    if status != 0:
+        return status, data
+    if base != url_prim:
+        _registrar(f"[mon] {url_prim} não respondeu no cadastro, tentando {base}")
+        return _http_json("POST", base + sufixo, token, dados)
+    return status, data
 
 
 # ══════════════════════════════════════════════
@@ -359,8 +433,7 @@ def status() -> dict:
     return {
         "existe":     existe,
         "patrimonio": cfg.get("patrimonio", ""),
-        "url_api":    (cfg.get("url_api") or cfg.get("api_url")
-                       or (cfg.get("api_urls") or [DEFAULT_URL_API])[0]),
+        "url_api":    DEFAULT_URL_API,
         # Sem padrão no código: um token conhecido na fonte vale tanto quanto
         # nenhum. Em máquina nova o técnico digita o token na interface.
         "token_agente": cfg.get("token_agente") or cfg.get("agent_secret") or "",
@@ -381,17 +454,17 @@ def status() -> dict:
 #  INSTALAÇÃO
 # ══════════════════════════════════════════════
 
-def _run_cmd(cmd: list, label: str) -> Tuple[bool, str]:
-    """Versão em lista do _run_cmd do agente (que recebe string e passa pelo
-    shell). Aqui os argumentos vêm de caminhos e nomes de serviço, então lista
-    evita qualquer questão de escape."""
+def _run_cmd(cmd: list, label: str, timeout: int = 120) -> Tuple[bool, str]:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                            creationflags=_NO_WINDOW)
         ok = r.returncode == 0
         if not ok:
             _log(f"{label}: {(r.stderr or r.stdout or '').strip()[:200]}", "warn")
         return ok, r.stdout
+    except subprocess.TimeoutExpired:
+        _log(f"{label}: excedeu {timeout}s — pulando", "warn")
+        return False, ""
     except Exception as e:
         _log(f"{label}: {e}", "err")
         return False, ""
@@ -406,15 +479,12 @@ def _origem_exe(nome: str) -> Optional[Path]:
 
 
 def _instalar_servico(agente_path: Path) -> bool:
-    """Registra o serviço com "sc create" direto — funciona porque o
-    BlueControl_Metricas.exe implementa o protocolo de serviço do Windows de
-    verdade, diferente do agente leve antigo, que só rodava um loop comum e o
-    Windows derrubava sozinho."""
+    _log("Preparando serviço de métricas…", "muted")
     subprocess.run(["sc", "stop", SERVICE_NAME], capture_output=True,
-                   creationflags=_NO_WINDOW)
+                   creationflags=_NO_WINDOW, timeout=30)
     time.sleep(1)
     subprocess.run(["sc", "delete", SERVICE_NAME], capture_output=True,
-                   creationflags=_NO_WINDOW)
+                   creationflags=_NO_WINDOW, timeout=15)
     time.sleep(1)
 
     ok, _ = _run_cmd(
@@ -428,45 +498,47 @@ def _instalar_servico(agente_path: Path) -> bool:
                    capture_output=True, creationflags=_NO_WINDOW)
     _run_cmd(["sc", "start", SERVICE_NAME], "Iniciar serviço")
 
-    # "start" só confirma que o pedido foi aceito, não que o serviço continuou
-    # de pé — confere de verdade com uma pausa curta.
-    time.sleep(2)
-    try:
-        r = subprocess.run(["sc", "query", SERVICE_NAME], capture_output=True,
-                           text=True, creationflags=_NO_WINDOW)
-        return "RUNNING" in r.stdout
-    except Exception:
-        return False
+    for _ in range(10):
+        time.sleep(3)
+        try:
+            r = subprocess.run(["sc", "query", SERVICE_NAME], capture_output=True,
+                               text=True, creationflags=_NO_WINDOW)
+            if "RUNNING" in r.stdout:
+                return True
+            if "STOPPED" in r.stdout or "FAILED" in r.stdout:
+                _log("Serviço parou logo após iniciar — verifique metricas.log", "err")
+                return False
+        except Exception:
+            pass
+    _log("Serviço não confirmou RUNNING em 30s — pode estar lento na 1ª vez", "warn")
+    return False
 
 
 def _habilitar_winrm() -> bool:
-    """Liga o WinRM e libera a porta 5985 no firewall — sem isso o painel não
-    consegue Bloquear/Reiniciar essa máquina remotamente (usa WinRM, não o
-    agente de monitoramento)."""
+    """Liga o WinRM e libera a porta 5985 no firewall."""
+    _log("Habilitando WinRM (pode demorar alguns segundos)…", "muted")
     _run_cmd(["powershell", "-NoProfile", "-Command",
               "Enable-PSRemoting -Force -SkipNetworkProfileCheck"],
-             "Habilitar WinRM")
+             "Habilitar WinRM", timeout=30)
     _run_cmd(["powershell", "-NoProfile", "-Command",
               "Set-Service WinRM -StartupType Automatic"],
-             "Serviço WinRM automático")
+             "Serviço WinRM automático", timeout=15)
 
     for regra in ("WinRM BlueControl", "Ping BlueControl"):
         subprocess.run(["netsh", "advfirewall", "firewall", "delete", "rule",
                         f"name={regra}"], capture_output=True,
-                       creationflags=_NO_WINDOW)
+                       creationflags=_NO_WINDOW, timeout=10)
 
-    # Libera ping (ICMPv4 echo) — o Windows 11 bloqueia por padrão, e o NOC usa
-    # ping pra mostrar online/offline.
     _run_cmd(["netsh", "advfirewall", "firewall", "add", "rule",
               "name=Ping BlueControl", "protocol=icmpv4:8,any",
               "dir=in", "action=allow"],
-             "Liberar ping no firewall")
+             "Liberar ping no firewall", timeout=10)
 
     ok, _ = _run_cmd(
         ["netsh", "advfirewall", "firewall", "add", "rule",
          "name=WinRM BlueControl", "protocol=TCP", "dir=in",
          f"localport={WINRM_PORTA}", "action=allow"],
-        "Liberar porta no firewall",
+        "Liberar porta no firewall", timeout=10,
     )
     return ok
 
@@ -501,8 +573,10 @@ $cfg = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnB
 Register-ScheduledTask -TaskName '{REMOTE_TASK}' -Action $acao -Trigger $gatilho -Principal $principal -Settings $cfg | Out-Null
 Start-ScheduledTask -TaskName '{REMOTE_TASK}'
 """
+    _log("Registrando tarefa do acesso remoto…", "muted")
     ok, _ = _run_cmd(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                      "-Command", ps], "Registrar tarefa do acesso remoto")
+                      "-Command", ps], "Registrar tarefa do acesso remoto",
+                     timeout=60)
     if not ok:
         return False
     time.sleep(4)
@@ -566,7 +640,8 @@ def _substituir_exe_travado(origem: Path, destino: Path) -> bool:
 
 
 def instalar(params: dict) -> None:
-    """Roda em thread separada: publica o andamento por SSE e não retorna nada."""
+    """Roda em thread separada: publica o andamento por SSE e polling."""
+    _iniciar_progresso()
     try:
         patrimonio = (params.get("patrimonio") or "").strip()
         token      = params.get("token_agente") or ""
@@ -579,14 +654,31 @@ def instalar(params: dict) -> None:
         # BlueControl_Metricas.exe lê. Sem esquema, o serviço sobe e falha
         # calado a cada coleta, e o sintoma aparece só no painel, dias depois.
         url_api, erro_url = normalizar_url(params.get("url_api", ""))
+        # Se a URL informada veio de um config antigo com IP errado, o cadastro
+        # já fez fallback para DEFAULT_URL_API — grava o IP que funciona.
+        # Testa com socket puro em vez de HTTP: não depende de token, e 3s bastam
+        # para saber se a porta está aberta.
+        if not erro_url:
+            base_padrao, _ = normalizar_url(DEFAULT_URL_API)
+            if url_api != base_padrao and not _porta_aberta(url_api):
+                _log(f"{url_api} não respondeu — usando {DEFAULT_URL_API}", "info")
+                url_api = base_padrao
 
         if not patrimonio or not token or erro_url:
             _log(erro_url or "Patrimônio e token são obrigatórios.", "err")
             _progresso(100, "Dados incompletos", erro=True)
             return
 
-        _progresso(10, "Criando C:\\BlueControl…")
+        _progresso(10, "Preparando C:\\BlueControl…")
+        _log("Parando processos que possam travar a pasta…", "muted")
+        _parar_agente_antigo()
+        _matar_tudo_bluecontrol()
         INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+        # Garante que o usuário atual tem permissão de escrita na pasta
+        subprocess.run(
+            ["icacls", str(INSTALL_DIR), "/grant", f"{os.getlogin()}:(OI)(CI)F",
+             "/T", "/Q"],
+            capture_output=True, creationflags=_NO_WINDOW)
         _log(f"Pasta {INSTALL_DIR} pronta", "ok")
 
         _progresso(25, "Gravando config.json…")
@@ -600,11 +692,42 @@ def instalar(params: dict) -> None:
             "api_urls": [url_api],
             "agent_secret": token,
         }
-        CONFIG_PATH.write_text(json.dumps(config, indent=2, ensure_ascii=False),
-                               encoding="utf-8")
+        config_texto = json.dumps(config, indent=2, ensure_ascii=False)
+        gravou = False
+        for _tentativa in range(5):
+            try:
+                if CONFIG_PATH.exists():
+                    CONFIG_PATH.unlink()
+                CONFIG_PATH.write_text(config_texto, encoding="utf-8")
+                gravou = True
+                break
+            except (PermissionError, OSError) as exc:
+                _log(f"config.json tentativa {_tentativa+1}/5: {exc}", "muted")
+                _matar_tudo_bluecontrol()
+                subprocess.run(
+                    ["icacls", str(CONFIG_PATH), "/grant",
+                     f"{os.getlogin()}:F", "/Q"],
+                    capture_output=True, creationflags=_NO_WINDOW)
+                time.sleep(3)
+        if not gravou:
+            _log("Tentando gravar config.json via PowerShell elevado…", "muted")
+            ps = (f"Remove-Item -LiteralPath '{CONFIG_PATH}' -Force "
+                  "-ErrorAction SilentlyContinue; "
+                  f"Set-Content -LiteralPath '{CONFIG_PATH}' "
+                  f"-Value '{config_texto.replace(chr(39), chr(39)+chr(39))}' "
+                  f"-Encoding UTF8 -Force")
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-Command", ps],
+                capture_output=True, text=True, timeout=30,
+                creationflags=_NO_WINDOW)
+            if r.returncode != 0 or not CONFIG_PATH.exists():
+                _log(f"Não consegui gravar config.json: {(r.stderr or '').strip()[:200]}", "err")
+                _progresso(100, "Falha ao gravar config.json", erro=True)
+                return
         _log(f"config.json gravado — patrimônio {patrimonio}", "ok")
 
-        _progresso(40, "Copiando o agente…")
+        _progresso(35, "Localizando o agente de métricas…")
         agente_origem = _origem_exe(AGENTE_EXE)
         if not agente_origem:
             _log(f"{AGENTE_EXE} não encontrado — coloque a pasta agents\\ ao lado "
@@ -612,6 +735,8 @@ def instalar(params: dict) -> None:
             _progresso(100, "Arquivo necessário não encontrado", erro=True)
             return
 
+        _progresso(40, "Copiando o agente…")
+        _log(f"Origem: {agente_origem}", "muted")
         agente_destino = INSTALL_DIR / AGENTE_EXE
         if not _substituir_exe_travado(agente_origem, agente_destino):
             _progresso(100, "Não consegui substituir o agente antigo", erro=True)
@@ -655,6 +780,8 @@ def instalar(params: dict) -> None:
     except Exception as e:
         _log(f"Erro inesperado: {e}", "err")
         _progresso(100, "Falha na instalação", erro=True)
+    finally:
+        _finalizar_progresso()
 
 
 # ══════════════════════════════════════════════
@@ -662,16 +789,26 @@ def instalar(params: dict) -> None:
 # ══════════════════════════════════════════════
 
 def _parar_servico() -> bool:
-    """Para e remove o serviço de métricas. O sleep entre stop e delete não é
-    superstição: o "sc delete" num serviço ainda parando marca para remoção e
-    só efetiva no reboot, e aí a pasta continua em uso e não apaga."""
-    subprocess.run(["sc", "stop", SERVICE_NAME], capture_output=True,
-                   creationflags=_NO_WINDOW)
+    """Para e remove os serviços de métricas (atual e legado)."""
+    for svc in (SERVICE_NAME, LEGADO_SERVICE):
+        subprocess.run(["sc", "stop", svc], capture_output=True,
+                       creationflags=_NO_WINDOW)
+    time.sleep(3)
+    _matar_tudo_bluecontrol()
     time.sleep(2)
-    r = subprocess.run(["sc", "delete", SERVICE_NAME], capture_output=True,
-                       text=True, creationflags=_NO_WINDOW)
-    # 1060 = serviço não existe: para a limpeza isso é sucesso, não erro.
-    return r.returncode == 0 or "1060" in (r.stdout or "") + (r.stderr or "")
+    # Remover tarefa agendada do acesso remoto
+    subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+         f"Unregister-ScheduledTask -TaskName '{REMOTE_TASK}' -Confirm:$false "
+         "-ErrorAction SilentlyContinue"],
+        capture_output=True, timeout=30, creationflags=_NO_WINDOW)
+    ok = True
+    for svc in (SERVICE_NAME, LEGADO_SERVICE):
+        r = subprocess.run(["sc", "delete", svc], capture_output=True,
+                           text=True, creationflags=_NO_WINDOW)
+        if r.returncode != 0 and "1060" not in (r.stdout or "") + (r.stderr or ""):
+            ok = False
+    return ok
 
 
 def _remover_acesso_remoto() -> bool:
@@ -685,30 +822,74 @@ def _remover_acesso_remoto() -> bool:
     return r.returncode == 0
 
 
+def _matar_tudo_bluecontrol():
+    """Mata agressivamente todo processo que possa segurar C:\\BlueControl."""
+    for nome in (AGENTE_EXE, REMOTE_EXE, "BlueControl_Lite.exe",
+                 "BlueControl_Metricas.exe", "BlueControl_Remote.exe"):
+        subprocess.run(["taskkill", "/F", "/T", "/IM", nome],
+                       capture_output=True, creationflags=_NO_WINDOW)
+    # Mata qualquer processo cujo executável esteja dentro de C:\BlueControl
+    subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+         "Get-Process | Where-Object { $_.Path -like 'C:\\BlueControl\\*' } "
+         "| Stop-Process -Force -ErrorAction SilentlyContinue"],
+        capture_output=True, timeout=30, creationflags=_NO_WINDOW)
+
+
 def _remover_pasta() -> Tuple[bool, str]:
     """Apaga C:\\BlueControl. Só depois do serviço e da tarefa saírem: com os
     .exe ainda em execução o Windows recusa a remoção."""
     if not INSTALL_DIR.exists():
         return True, "ja_nao_existia"
     ultimo = ""
-    for _ in range(3):
+    for tentativa in range(5):
+        if tentativa > 0:
+            _matar_tudo_bluecontrol()
+            time.sleep(3)
         try:
             shutil.rmtree(INSTALL_DIR)
             return True, ""
         except Exception as e:
             ultimo = str(e)
-            time.sleep(2)
+    # Fallback 1: cmd /c rd /s /q
+    try:
+        subprocess.run(["cmd", "/c", "rd", "/s", "/q", str(INSTALL_DIR)],
+                       capture_output=True, timeout=30, creationflags=_NO_WINDOW)
+        if not INSTALL_DIR.exists():
+            return True, ""
+    except Exception:
+        pass
+    # Fallback 2: PowerShell Remove-Item -Force
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-Command",
+             f"Remove-Item -LiteralPath '{INSTALL_DIR}' -Recurse -Force"],
+            capture_output=True, timeout=30, creationflags=_NO_WINDOW)
+        if not INSTALL_DIR.exists():
+            return True, ""
+    except Exception:
+        pass
+    # Último recurso: deletar pelo menos o config.json para liberar o patrimônio
+    try:
+        if CONFIG_PATH.exists():
+            CONFIG_PATH.unlink()
+            _log("config.json apagado (pasta ainda não pôde ser removida)", "warn")
+    except Exception:
+        pass
     return False, ultimo
 
 
 def limpar(params: dict) -> None:
     """Desfaz nesta máquina tudo o que o instalar() criou, na ordem inversa.
+    _iniciar_progresso() / _finalizar_progresso() usam o mesmo canal de polling.
 
     Não mexe no serviço WinRM: ele é compartilhado e pode ter sido ligado por
     GPO ou por outra ferramenta antes do BlueControl existir aqui. Desligá-lo
     quebraria gerenciamento alheio para desfazer algo que talvez não tenhamos
     feito. As duas regras de firewall são nossas, têm nome próprio, e saem.
     """
+    _iniciar_progresso()
     try:
         _progresso(10, "Parando o serviço de métricas…")
         if _parar_servico():
@@ -732,7 +913,11 @@ def limpar(params: dict) -> None:
         _log("Serviço WinRM mantido ligado — é compartilhado, pode não ter sido "
              "nosso. Desligue à mão se for o caso.", "info")
 
-        _progresso(70, "Apagando C:\\BlueControl…")
+        _progresso(60, "Encerrando processos restantes…")
+        _matar_tudo_bluecontrol()
+        time.sleep(3)
+
+        _progresso(75, "Apagando C:\\BlueControl…")
         ok_pasta, motivo = _remover_pasta()
         if ok_pasta and motivo == "ja_nao_existia":
             _log(f"Pasta {INSTALL_DIR} já não existia", "ok")
@@ -740,8 +925,9 @@ def limpar(params: dict) -> None:
             _log(f"Pasta {INSTALL_DIR} removida", "ok")
         else:
             _log(f"Não consegui apagar {INSTALL_DIR}: {motivo}", "err")
-            _log("Reinicie a máquina e rode a limpeza de novo — algum arquivo "
-                 "ainda estava em uso.", "info")
+            _log("Feche todas as janelas do BlueControl, verifique se há "
+                 "processos remanescentes no Gerenciador de Tarefas e "
+                 "rode a limpeza de novo.", "info")
 
         # O cache do ID some junto com a instalação: sem isso, reinstalar nesta
         # mesma sessão reaproveitaria um ID que pode já não valer.
@@ -757,3 +943,5 @@ def limpar(params: dict) -> None:
     except Exception as e:
         _log(f"Erro inesperado na limpeza: {e}", "err")
         _progresso(100, "Falha na limpeza", erro=True)
+    finally:
+        _finalizar_progresso()

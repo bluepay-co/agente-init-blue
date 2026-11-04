@@ -21,6 +21,8 @@ let _monBuscaTimer = null;
 let _monResultados = [];
 let _monPrefilled = false;    // URL/token já preenchidos uma vez (ver monCarregarStatus)
 let _monLimpando = false;     // limpeza em curso: o progresso é dela, não da instalação
+let _monPollTimer = null;     // polling de progresso (substitui SSE)
+let _monLogCount = 0;         // quantas linhas de log já foram exibidas
 
 // ── Status atual ─────────────────────────────
 
@@ -222,43 +224,53 @@ function monSetProgress(pct, texto, ok, erro) {
   document.getElementById('monProgressLabel').textContent = texto;
 }
 
-// O /api/stream é compartilhado com a aba Setup: cada view trata só os seus
-// tipos de evento e ignora o resto.
-function _monHandleEvent(event) {
-  let e;
-  try { e = JSON.parse(event.data); } catch (_) { return; }
+// ── Polling de progresso (substitui SSE para esta aba) ───────────────────────
 
+function _monIniciarPolling() {
+  _monPararPolling();
+  _monLogCount = 0;
+  _monPollTimer = setInterval(_monPollProgresso, 1200);
+}
+
+function _monPararPolling() {
+  if (_monPollTimer) { clearInterval(_monPollTimer); _monPollTimer = null; }
+}
+
+async function _monPollProgresso() {
   try {
-    if (e.type === 'mon_log') {
-      monLog(e.msg, e.tipo);
+    const d = await apiGet('/api/monitoramento/progresso');
 
-    } else if (e.type === 'mon_progresso') {
-      monSetProgress(e.pct, e.texto, e.ok, e.erro);
-      if (e.pct >= 100) {
-        // Instalação e limpeza compartilham o mesmo canal de progresso. Sem
-        // distinguir, o fim de uma limpeza escrevia "✔ INSTALADO" no botão de
-        // instalar e deixava o de limpar travado em "REMOVENDO…".
-        if (_monLimpando) {
-          const btnL = document.getElementById('monBtnLimpar');
-          btnL.disabled = false;
-          btnL.textContent = e.erro ? 'FALHOU — TENTAR DE NOVO'
-                                    : 'Excluir máquina e limpar o agente';
-          _monLimpando = false;
-        } else {
-          const btn = document.getElementById('monBtnInstalar');
-          btn.disabled = false;
-          btn.textContent = e.ok ? '✔  INSTALADO'
-                          : e.erro ? 'FALHOU — TENTAR DE NOVO'
-                          : 'SALVAR E INSTALAR';
-          btn.classList.toggle('success', !!e.ok);
-          btn.classList.toggle('erro', !!e.erro);
-        }
-        if (_monEventSource) { _monEventSource.close(); _monEventSource = null; }
-        if (e.ok) setTimeout(monCarregarStatus, 1000);
+    // Exibe as linhas de log novas (que ainda não foram mostradas)
+    const logs = d.logs || [];
+    for (let i = _monLogCount; i < logs.length; i++) {
+      monLog(logs[i].msg, logs[i].tipo);
+    }
+    _monLogCount = logs.length;
+
+    // Atualiza a barra de progresso
+    monSetProgress(d.pct, d.texto, d.ok, d.erro);
+
+    if (d.pct >= 100) {
+      _monPararPolling();
+      if (_monLimpando) {
+        const btnL = document.getElementById('monBtnLimpar');
+        btnL.disabled = false;
+        btnL.textContent = d.erro ? 'FALHOU — TENTAR DE NOVO'
+                                  : 'Excluir máquina e limpar o agente';
+        _monLimpando = false;
+      } else {
+        const btn = document.getElementById('monBtnInstalar');
+        btn.disabled = false;
+        btn.textContent = d.ok ? '✔  INSTALADO'
+                        : d.erro ? 'FALHOU — TENTAR DE NOVO'
+                        : 'SALVAR E INSTALAR';
+        btn.classList.toggle('success', !!d.ok);
+        btn.classList.toggle('erro', !!d.erro);
       }
+      if (d.ok) setTimeout(monCarregarStatus, 1000);
     }
   } catch (_) {
-    // um evento problemático não interrompe os próximos
+    // Falha de rede: o próximo tick tenta de novo
   }
 }
 
@@ -283,7 +295,11 @@ async function monInstalar() {
   box.innerHTML = '';
   box.classList.add('show');
 
-  let patrimonio = null;
+  const payload = {
+    url_api: urlApi,
+    token_agente: token,
+    intervalo_segundos: intervalo,
+  };
 
   if (abaBuscar) {
     if (!_monSelecionada) {
@@ -291,9 +307,8 @@ async function monInstalar() {
       btn.disabled = false;
       return;
     }
-    patrimonio = _monSelecionada.patrimonio_interno;
-    monLog(`Usando máquina já cadastrada: PAT ${patrimonio}`, 'info');
-
+    payload.patrimonio = _monSelecionada.patrimonio_interno;
+    monLog(`Usando máquina já cadastrada: PAT ${payload.patrimonio}`, 'info');
   } else {
     const nome = document.getElementById('monCadNome').value.trim();
     if (!nome) {
@@ -301,58 +316,36 @@ async function monInstalar() {
       btn.disabled = false;
       return;
     }
-    btn.textContent = 'CADASTRANDO…';
-    monLog('Cadastrando nova máquina…', 'info');
-    try {
-      const d = await apiPost('/api/monitoramento/cadastrar', {
-        url_api:      urlApi,
-        token_agente: token,
-        nome_maquina: nome,
-        responsavel:  document.getElementById('monCadResponsavel').value.trim() || null,
-        locadora:     document.getElementById('monCadLocadora').value.trim() || null,
-        categoria:    document.getElementById('monCadCategoria').value,
-        setor:        document.getElementById('monCadSetor').value.trim() || null,
-        numero_serie: document.getElementById('monCadSerie').value.trim() || null,
-        // Vazio tem significado: manda null para a API gerar o patrimônio.
-        patrimonio_interno: document.getElementById('monCadPatrimonio').value.trim() || null,
-        status_estoque:     document.getElementById('monCadStatus').value,
-        anydesk_id:         document.getElementById('monCadAnydesk').value.trim() || null,
-      });
-      // O /buscar devolve "patrimonio_interno"; aceita os dois nomes para não
-      // depender de qual deles o cadastro responde.
-      patrimonio = d.patrimonio || d.patrimonio_interno;
-      if (!patrimonio) {
-        monLog(`Erro ao cadastrar: ${d.detail || 'o servidor não devolveu o patrimônio'}`, 'err');
-        btn.disabled = false;
-        btn.textContent = 'SALVAR E INSTALAR';
-        return;
-      }
-      monLog(`Máquina cadastrada — patrimônio ${patrimonio}`, 'ok');
-    } catch (e) {
-      monLog('Não foi possível contactar o servidor BlueControl.', 'err');
-      btn.disabled = false;
-      btn.textContent = 'SALVAR E INSTALAR';
-      return;
-    }
+    payload.nome_maquina = nome;
+    payload.responsavel  = document.getElementById('monCadResponsavel').value.trim() || null;
+    payload.locadora     = document.getElementById('monCadLocadora').value.trim() || null;
+    payload.categoria    = document.getElementById('monCadCategoria').value;
+    payload.setor        = document.getElementById('monCadSetor').value.trim() || null;
+    payload.numero_serie = document.getElementById('monCadSerie').value.trim() || null;
+    payload.patrimonio_interno = document.getElementById('monCadPatrimonio').value.trim() || null;
+    payload.status_estoque     = document.getElementById('monCadStatus').value;
+    payload.anydesk_id         = document.getElementById('monCadAnydesk').value.trim() || null;
   }
 
-  // Conecta o SSE ANTES de disparar a instalação, pra não perder os primeiros
-  // eventos.
-  if (_monEventSource) _monEventSource.close();
-  _monEventSource = apiStream('/api/stream');
-  _monEventSource.onmessage = _monHandleEvent;
-  _monEventSource.onerror = () => monLog('Conexão com o agente local perdida.', 'warn');
+  btn.textContent = 'CADASTRANDO E INSTALANDO…';
+  monLog('Enviando dados ao agente…', 'info');
+  monSetProgress(5, 'Cadastrando e instalando…');
 
-  btn.textContent = 'INSTALANDO…';
   try {
-    await apiPost('/api/monitoramento/instalar', {
-      patrimonio,
-      url_api: urlApi,
-      token_agente: token,
-      intervalo_segundos: intervalo,
-    });
+    const r = await apiPost('/api/monitoramento/cadastrar_e_instalar', payload);
+    if (r.patrimonio) {
+      monLog(`Patrimônio: ${r.patrimonio} — instalação em andamento…`, 'ok');
+      btn.textContent = 'INSTALANDO…';
+      _monIniciarPolling();
+    } else if (r.detail) {
+      monLog(`Erro: ${r.detail}`, 'err');
+      monSetProgress(100, 'Falha no cadastro', false, true);
+      btn.disabled = false;
+      btn.textContent = 'SALVAR E INSTALAR';
+    }
   } catch (e) {
-    monLog('Falha ao contactar o agente local.', 'err');
+    monLog(`Falha ao contactar o agente local: ${e.message || e}`, 'err');
+    monSetProgress(100, 'Falha ao contactar o agente', false, true);
     btn.disabled = false;
     btn.textContent = 'SALVAR E INSTALAR';
   }
@@ -393,38 +386,40 @@ async function monPedirLimpeza() {
   btn.textContent = 'REMOVENDO…';
   _monLimpando = true;
 
-  if (!_monEventSource) {
-    _monEventSource = apiStream('/api/stream');
-    _monEventSource.onmessage = _monHandleEvent;
-  }
-
-  // Servidor primeiro: com o agente local já apagado, um erro na API deixaria
-  // a máquina limpa e o cadastro órfão no painel, sem nada aqui para repetir.
+  // Servidor primeiro: tenta descadastrar do BlueControl IT. Se falhar (IP
+  // errado, rede fora, token inválido), pergunta se limpa só localmente.
+  let excluidoDoServidor = false;
   try {
     const d = await apiPost('/api/monitoramento/excluir', {
       url_api: document.getElementById('monCfgUrlApi').value.trim(),
       token_agente: document.getElementById('monCfgToken').value.trim(),
       patrimonio,
     });
-    if (!d.ok) {
+    if (d.patrimonio || d.patrimonio_interno) {
+      monLog(`Cadastro ${d.patrimonio || d.patrimonio_interno} removido do BlueControl`, 'ok');
+      excluidoDoServidor = true;
+    } else {
       monLog(`Não removi do BlueControl: ${d.detail || 'erro desconhecido'}`, 'err');
-      monLog('Nada foi apagado nesta máquina — corrija e tente de novo.', 'info');
+    }
+  } catch (e) {
+    monLog('Não consegui contactar o servidor do BlueControl.', 'err');
+  }
+
+  if (!excluidoDoServidor) {
+    if (!confirm('Não consegui remover o cadastro do BlueControl IT.\n\n'
+               + 'Quer limpar o agente local mesmo assim?\n'
+               + '(O cadastro continua no painel — remova por lá depois.)')) {
       btn.disabled = false;
       btn.textContent = 'Excluir máquina e limpar o agente';
       _monLimpando = false;
       return;
     }
-    monLog(`Cadastro ${d.patrimonio} removido do BlueControl`, 'ok');
-  } catch (e) {
-    monLog('Falha ao contactar o agente local.', 'err');
-    btn.disabled = false;
-    btn.textContent = 'Excluir máquina e limpar o agente';
-    _monLimpando = false;
-    return;
+    monLog('Prosseguindo com a limpeza local — remova o cadastro pelo painel.', 'warn');
   }
 
   try {
     await apiPost('/api/monitoramento/limpar', {});
+    _monIniciarPolling();
   } catch (e) {
     monLog('Falha ao iniciar a limpeza local.', 'err');
     btn.disabled = false;
