@@ -66,13 +66,12 @@ async function vpnCarregarStatus() {
       // Conexao automatica exige as DUAS coisas: perfil em config-auto e o
       // OpenVPNService rodando. Mostrar as duas evita a conclusao errada de
       // que esta automatico quando o servico esta parado.
-      const auto = d.autoconexao && d.servico === 'rodando';
+      const auto = d.autoconexao && (d.servico === 'rodando' || d.servico === 'pronto');
       titulo.textContent = auto ? 'VPN pronta (conexão automática)' : 'VPN pronta';
       detalhe.textContent = `${comCred} de ${total} perfil(is) com credencial `
         + `gravada — ${_vpnEsc((d.perfis || []).join(', '))}`
         + (auto ? ' · conecta sozinha no boot'
-                : d.autoconexao ? ' · perfil em config-auto, mas o '
-                                  + `OpenVPNService está ${_vpnEsc(d.servico)}`
+                : d.autoconexao ? ` · tarefa agendada OK, VPN ${_vpnEsc(d.servico)}`
                                 : ' · conexão manual pelo OpenVPN GUI');
       dot.className = 'status-dot ok';
     } else if (total > 0) {

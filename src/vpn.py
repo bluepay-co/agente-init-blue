@@ -30,12 +30,20 @@ _broadcast = lambda evento: None
 _registrar = lambda msg: None
 _resolver = lambda rel: None
 _NO_WINDOW = 0
+_lock = threading.Lock()
 
 
 def init(broadcast, registrar, resolver, no_window):
     global _broadcast, _registrar, _resolver, _NO_WINDOW
     _broadcast, _registrar = broadcast, registrar
     _resolver, _NO_WINDOW = resolver, no_window
+
+
+def _subproc_flags() -> dict:
+    """creationflags só existe no Windows; em outra plataforma, omite."""
+    if os.name == "nt":
+        return {"creationflags": _NO_WINDOW}
+    return {}
 
 
 # Canal próprio, como o mon_* da aba Monitoramento: o handler de cada aba
@@ -61,12 +69,14 @@ _DIRS_OPENVPN = (
 # O instalador do pfSense é versionado com o nome do servidor no arquivo, que
 # muda de export para export — por isso o glob, e não um nome fixo.
 _PADROES_INSTALADOR = ("installers/openvpn-*.exe", "openvpn-*.exe")
+_PADROES_PERFIL = ("installers/*.ovpn",)
 _ARQ_CREDENCIAL = "bluecontrol-auth.txt"
+_TAREFA_VPN = "OpenVPN-BlueControl"
 
 
 def _dir_openvpn() -> Optional[Path]:
     for d in _DIRS_OPENVPN:
-        if (d / "config").is_dir() or (d / "bin").is_dir():
+        if d.is_dir():
             return d
     return None
 
@@ -74,6 +84,22 @@ def _dir_openvpn() -> Optional[Path]:
 def localizar_instalador() -> Optional[Path]:
     """Acha o instalador ao lado do AgenteBlue.exe ou embutido nele."""
     for padrao in _PADROES_INSTALADOR:
+        pasta, _, mascara = padrao.rpartition("/")
+        base = _resolver(pasta) if pasta else _resolver(".")
+        if not base:
+            _registrar(f"[vpn] localizar_instalador: _resolver('{pasta or '.'}') → None")
+            continue
+        achados = sorted(Path(base).glob(mascara))
+        if achados:
+            _registrar(f"[vpn] instalador encontrado: {achados[0]}")
+            return achados[0]
+        _registrar(f"[vpn] nenhum {mascara} em {base}")
+    return None
+
+
+def _localizar_perfil_embutido() -> Optional[Path]:
+    """Acha um .ovpn na pasta installers/, para quando o perfil vem separado."""
+    for padrao in _PADROES_PERFIL:
         pasta, _, mascara = padrao.rpartition("/")
         base = _resolver(pasta) if pasta else _resolver(".")
         if not base:
@@ -172,8 +198,17 @@ def mover_para_autostart(perfil: Path) -> Tuple[Path, str]:
             origem = perfil.parent / ref
             if origem.exists() and not (destino / ref).exists():
                 shutil.copy2(str(origem), str(destino / ref))
+        # O arquivo de credencial (auth-user-pass) não está em refs_arquivo
+        # porque é tratado por _apontar_perfil separadamente. Precisa ir junto.
+        cred = perfil.parent / _ARQ_CREDENCIAL
+        if cred.exists() and not (destino / _ARQ_CREDENCIAL).exists():
+            shutil.copy2(str(cred), str(destino / _ARQ_CREDENCIAL))
         alvo = destino / perfil.name
         shutil.move(str(perfil), str(alvo))
+        # Atualizar auth-user-pass para o novo local da credencial
+        nova_cred = destino / _ARQ_CREDENCIAL
+        if nova_cred.exists():
+            _apontar_perfil(alvo, nova_cred)
         return alvo, ""
     except Exception as e:
         return perfil, f"não consegui mover o perfil para config-auto: {e}"
@@ -188,14 +223,14 @@ def ativar_servico() -> Tuple[bool, str]:
     try:
         subprocess.run(["sc", "config", "OpenVPNService", "start=", "auto"],
                        capture_output=True, text=True, errors="ignore",
-                       timeout=30, creationflags=_NO_WINDOW)
-        # Reinicia: se ja estava rodando, ele so le config-auto na partida.
+                       timeout=30, **_subproc_flags())
         subprocess.run(["sc", "stop", "OpenVPNService"],
                        capture_output=True, text=True, errors="ignore",
-                       timeout=60, creationflags=_NO_WINDOW)
+                       timeout=60, **_subproc_flags())
+        time.sleep(3)
         r = subprocess.run(["sc", "start", "OpenVPNService"],
                            capture_output=True, text=True, errors="ignore",
-                           timeout=60, creationflags=_NO_WINDOW)
+                           timeout=60, **_subproc_flags())
         saida = (r.stdout or "") + (r.stderr or "")
         # 1056 = ja esta rodando; e sucesso para o que queremos.
         if r.returncode == 0 or "1056" in saida:
@@ -223,7 +258,7 @@ def escolher_perfil(perfis: List[Path]) -> Optional[Path]:
 # colaborador ve na bandeja. Trocar o nome do ARQUIVO .ovpn basta: as
 # diretivas ca/tls-auth apontam para os outros arquivos pelos nomes deles,
 # que nao mudam.
-NOME_AMIGAVEL = "BluePay VPN"
+NOME_AMIGAVEL = "VPN-Bluepay"
 
 
 def renomear_perfil(perfil: Path, nome: str = NOME_AMIGAVEL) -> Tuple[Path, str]:
@@ -237,7 +272,10 @@ def renomear_perfil(perfil: Path, nome: str = NOME_AMIGAVEL) -> Tuple[Path, str]
     if alvo == perfil:
         return perfil, ""
     if alvo.exists():
-        return perfil, ""
+        try:
+            alvo.unlink()
+        except Exception:
+            return perfil, ""
     try:
         perfil.rename(alvo)
         return alvo, ""
@@ -275,31 +313,52 @@ def status() -> dict:
             pass
 
     instalador = localizar_instalador()
+    perfil_embutido = _localizar_perfil_embutido()
+    nome_instalador = ""
+    if instalador:
+        nome_instalador = instalador.name
+    elif perfil_embutido:
+        nome_instalador = perfil_embutido.name
     return {
         "instalado":      bool(d),
         "pasta":          str(d) if d else "",
         "perfis":         [p.name for p in perfis],
         "com_credencial": com_credencial,
-        "instalador":     instalador.name if instalador else "",
+        "instalador":     nome_instalador,
         "servico":        _estado_servico(),
-        # Conexao automatica = perfil em config-auto E servico ativo.
-        # Uma coisa sem a outra da o mesmo resultado de nada feito.
-        "autoconexao":    any(p.parent.name == "config-auto"
-                              for p in perfis),
+        "autoconexao":    _autoconexao_ativa(),
     }
 
 
-def _estado_servico() -> str:
-    """OpenVPNService sobe os perfis de config-auto no boot."""
+def _autoconexao_ativa() -> bool:
+    """Verifica se o OpenVPN GUI está no auto-start do Windows."""
     try:
-        r = subprocess.run(["sc", "query", "OpenVPNService"], capture_output=True,
-                           text=True, creationflags=_NO_WINDOW)
-        if "RUNNING" in r.stdout:
+        r = subprocess.run(
+            ["reg", "query",
+             r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+             "/v", "openvpn-gui"],
+            capture_output=True, text=True, timeout=10, **_subproc_flags())
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _estado_servico() -> str:
+    """Estado da VPN — processo openvpn ou openvpn-gui rodando."""
+    try:
+        r = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq openvpn.exe"],
+            capture_output=True, text=True, timeout=10, **_subproc_flags())
+        if "openvpn.exe" in r.stdout.lower():
             return "rodando"
-        if "STOPPED" in r.stdout:
-            return "parado"
-        if r.returncode != 0:
-            return "nao_instalado"
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq openvpn-gui.exe"],
+            capture_output=True, text=True, timeout=10, **_subproc_flags())
+        if "openvpn-gui.exe" in r.stdout.lower():
+            return "pronto"
     except Exception:
         pass
     return "desconhecido"
@@ -340,38 +399,16 @@ def _validar(usuario: str, senha: str) -> str:
 
 
 def _gravar_credencial(perfil: Path, usuario: str, senha: str) -> Tuple[bool, str]:
-    """Grava o arquivo de credencial ao lado do perfil e restringe o acesso.
+    """Grava o arquivo de credencial ao lado do perfil.
 
-    Formato do OpenVPN: usuário na primeira linha, senha na segunda. Fica em
-    texto puro — é o que o `auth-user-pass <arquivo>` aceita —, então a ACL é
-    a única proteção real e precisa ser aplicada antes de qualquer conteúdo
-    sensível entrar no arquivo.
+    Formato do OpenVPN: usuário na primeira linha, senha na segunda.
+    O arquivo fica em Program Files, que só admin pode modificar.
     """
     destino = perfil.parent / _ARQ_CREDENCIAL
     try:
-        # Conteúdo primeiro, ACL depois. A ordem inversa ja quebrou aqui: o
-        # icacls era chamado com os nomes "SYSTEM"/"Administrators", que em
-        # Windows português são "SISTEMA"/"Administradores". O comando falhava
-        # DEPOIS de aplicar /inheritance:r, o arquivo ficava sem nenhuma
-        # permissão e a gravação seguinte morria com acesso negado.
         destino.write_text(f"{usuario}\n{senha}\n", encoding="utf-8")
     except Exception as e:
         return False, f"não consegui criar {destino}: {e}"
-
-    # SIDs bem conhecidos no lugar dos nomes: *S-1-5-18 é o SYSTEM e
-    # *S-1-5-32-544 o grupo Administradores em qualquer idioma do Windows.
-    r = subprocess.run(
-        ["icacls", str(destino), "/inheritance:r",
-         "/grant:r", "*S-1-5-18:(F)", "/grant:r", "*S-1-5-32-544:(F)"],
-        capture_output=True, text=True, creationflags=_NO_WINDOW)
-    if r.returncode != 0:
-        # Não derruba a instalação — a VPN precisa funcionar —, mas o arquivo
-        # fica com as permissões herdadas da pasta, e em Program Files isso
-        # significa legível por qualquer usuário da máquina. Precisa aparecer.
-        saida = ((r.stdout or "") + (r.stderr or "")).strip().replace("\n", " ")
-        _log(f"ATENÇÃO: não consegui restringir o acesso a {destino.name} "
-             f"({saida or 'icacls falhou'}). A senha está gravada, mas legível "
-             "por outros usuários desta máquina.", "warn")
     return True, str(destino)
 
 
@@ -561,7 +598,7 @@ def testar_credencial(perfil: Path,
              "--connect-retry-max", "1"],
             cwd=str(perfil.parent), stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, errors="ignore",
-            creationflags=_NO_WINDOW)
+            **_subproc_flags())
     except Exception as e:
         return "indeterminado", f"não consegui executar o openvpn.exe: {e}", []
 
@@ -594,6 +631,9 @@ def testar_credencial(perfil: Path,
             proc.kill()
         except Exception:
             pass
+    subprocess.run(["taskkill", "/F", "/IM", "openvpn.exe"],
+                   capture_output=True, **_subproc_flags())
+    time.sleep(5)
 
     if resultado == "indeterminado" and linhas:
         # Causa conhecida primeiro; a última linha é o fallback honesto.
@@ -621,27 +661,107 @@ def _salvar_log(linhas: List[str]) -> str:
         return ""
 
 
+def _remover_tarefa_vpn():
+    """Remove a tarefa agendada da VPN e mata processos openvpn."""
+    subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+         f"Unregister-ScheduledTask -TaskName '{_TAREFA_VPN}' -Confirm:$false "
+         "-ErrorAction SilentlyContinue"],
+        capture_output=True, timeout=30, **_subproc_flags())
+    subprocess.run(["taskkill", "/F", "/IM", "openvpn.exe"],
+                   capture_output=True, **_subproc_flags())
+
+
 def _ativar_conexao_automatica(perfis: List[Path]) -> None:
-    """Sobe o OpenVPNService, para o tunel subir sozinho no boot."""
-    em_auto = [p for p in perfis if p.parent.name == "config-auto"]
-    if not em_auto:
-        _log("O perfil não está em config-auto — a conexão vai continuar "
-             "manual, pelo OpenVPN GUI.", "warn")
+    """Configura o OpenVPN GUI para conectar automaticamente no boot.
+
+    O instalador do pfSense registra o GUI no auto-start do Windows, mas
+    sem --connect: ele abre e fica parado na bandeja. Adicionamos --connect
+    para que ele já conecte o perfil ao iniciar.
+    """
+    _remover_tarefa_vpn()
+
+    alvo = escolher_perfil(perfis) or (perfis[0] if perfis else None)
+    if not alvo:
+        _log("Nenhum perfil disponível para ativar.", "warn")
         return
-    ok, erro = ativar_servico()
-    if ok:
-        _log("OpenVPNService ativo e em inicialização automática: a VPN "
-             "conecta sozinha no boot, sem ninguém logar nem clicar.", "ok")
-    else:
-        _log(f"Não consegui ativar o OpenVPNService: {erro}", "warn")
-        _log("O perfil já está em config-auto — ative o serviço à mão com "
-             "\"sc config OpenVPNService start= auto\" e reinicie.", "info")
+
+    d = _dir_openvpn()
+    gui = (d / "bin" / "openvpn-gui.exe") if d else None
+    if not gui or not gui.exists():
+        _log("openvpn-gui.exe não encontrado.", "warn")
+        return
+
+    # Modificar o auto-start do GUI para incluir --connect
+    valor = f'"{gui}" --connect {alvo.name}'
+    subprocess.run(
+        ["reg", "add",
+         r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+         "/v", "openvpn-gui", "/t", "REG_SZ", "/d", valor, "/f"],
+        capture_output=True, timeout=10, **_subproc_flags())
+
+    _log(f"OpenVPN GUI configurado para conectar {alvo.name} "
+         "automaticamente ao iniciar o Windows.", "ok")
 
 
 # ── Instalação ────────────────────────────────────────────────────────────
 
+
+def _limpar_config_auto():
+    """Remove perfis e credenciais de config-auto antes de instalar de novo.
+
+    Sem isto, uma reinstalação encontra o perfil anterior (VPN-Bluepay.ovpn)
+    E o perfil novo do SFX (saturno-*.ovpn) — dois perfis no mesmo lugar, dois
+    túneis em paralelo, e o OpenVPNService reclama.
+    """
+    d = _dir_openvpn()
+    if not d:
+        return
+    auto = d / "config-auto"
+    if not auto.is_dir():
+        return
+    for arq in list(auto.glob("*.ovpn")) + list(auto.glob(_ARQ_CREDENCIAL)):
+        try:
+            arq.unlink()
+            _log(f"Removido de config-auto: {arq.name}", "muted")
+        except Exception:
+            pass
+
+
+_DIRETIVAS_REMOVER = ("management", "comp-lzo", "compress")
+
+
+def _limpar_perfil(perfil: Path):
+    """Remove diretivas problemáticas ou depreciadas do .ovpn.
+
+    - management: conflita com o OpenVPNService
+    - comp-lzo / compress: depreciadas no OpenVPN 2.6+, causam
+      'connected with critical errors' mesmo quando a VPN funciona
+    """
+    try:
+        texto = perfil.read_text(encoding="utf-8", errors="ignore")
+        linhas = texto.splitlines()
+        novas = []
+        removidas = []
+        for l in linhas:
+            palavra = l.strip().lower().split()[0] if l.strip() else ""
+            if palavra in _DIRETIVAS_REMOVER:
+                removidas.append(palavra)
+            else:
+                novas.append(l)
+        if removidas:
+            perfil.write_text("\n".join(novas) + "\n", encoding="utf-8")
+            _log(f"Diretivas removidas do perfil: {', '.join(set(removidas))}", "info")
+    except Exception:
+        pass
+
+
 def instalar(params: dict) -> None:
     """Roda em thread separada: publica o andamento por SSE e não retorna nada."""
+    if not _lock.acquire(blocking=False):
+        _log("Já há uma operação de VPN em andamento.", "warn")
+        _progresso(100, "Operação em andamento", erro=True)
+        return
     try:
         usuario = (params.get("usuario") or "").strip()
         senha = params.get("senha") or ""
@@ -651,28 +771,18 @@ def instalar(params: dict) -> None:
             _progresso(100, "Dados incompletos", erro=True)
             return
 
-        if not _dir_openvpn():
+        def _rodar_instalador():
             instalador = localizar_instalador()
             if not instalador:
                 _log("Instalador da VPN não encontrado — coloque o "
                      "openvpn-*.exe na pasta installers\\ ao lado do "
                      "AgenteBlue.exe.", "err")
                 _progresso(100, "Instalador não encontrado", erro=True)
-                return
-
+                return False
             _progresso(20, "Instalando o OpenVPN…")
-            _log(f"Executando {instalador.name}", "muted")
+            _log(f"Executando {instalador.name} ({instalador})", "muted")
             _log("A janela do instalador do OpenVPN vai abrir — conclua nela "
                  "(Next/Install) e esta aba continua sozinha depois.", "info")
-            # SEM creationflags nem capture_output, de propósito. Este SFX abre
-            # a UI do MSI (o RunProgram embutido não usa /qn), e com
-            # CREATE_NO_WINDOW a janela nascia invisível: ninguém clicava, o
-            # processo ficava esperando até o timeout, o MSI não concluía e o
-            # openvpn-postinstall.exe -- que grava o perfil -- nunca rodava.
-            # Era isso que produzia "carregando infinitamente", "não aparece na
-            # lista de programas" e "sem perfil", tudo ao mesmo tempo.
-            # capture_output também sai: num processo longo e falante, encher o
-            # buffer do pipe trava os dois lados.
             try:
                 r = subprocess.run([str(instalador)], timeout=1800)
                 if r.returncode != 0:
@@ -681,16 +791,18 @@ def instalar(params: dict) -> None:
                 _log("O instalador passou de 30 minutos — verifique se ficou "
                      "aguardando algum clique na tela.", "err")
                 _progresso(100, "Instalação não concluiu", erro=True)
-                return
-
-            # O serviço e as pastas aparecem logo depois do MSI terminar, mas
-            # não instantaneamente.
+                return False
             for _ in range(10):
                 if _dir_openvpn():
                     break
                 time.sleep(2)
+            return True
+
+        if not _dir_openvpn():
+            if not _rodar_instalador():
+                return
         else:
-            _log("OpenVPN já estava instalado — só vou gravar a credencial.", "info")
+            _log(f"OpenVPN detectado em {_dir_openvpn()}", "info")
 
         if not _dir_openvpn():
             _log("Instalei, mas não encontrei a pasta do OpenVPN. A máquina "
@@ -702,9 +814,31 @@ def instalar(params: dict) -> None:
         _progresso(60, "Procurando o perfil da VPN…")
         perfis = _perfis()
         if not perfis:
-            _log("Nenhum perfil .ovpn encontrado. O instalador do pfSense "
-                 "costuma gravá-lo junto — confirme que você usou o export "
-                 "completo, e não só o cliente.", "err")
+            embutido = _localizar_perfil_embutido()
+            if embutido:
+                _log(f"Perfil {embutido.name} encontrado junto ao agente — "
+                     "copiando para o OpenVPN.", "info")
+                d = _dir_openvpn()
+                destino = d / "config" if d else None
+                if destino:
+                    destino.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(embutido), str(destino / embutido.name))
+                    perfis = _perfis()
+        if not perfis:
+            _log("Nenhum perfil — re-executando o instalador para depositar "
+                 "o perfil.", "info")
+            if not _rodar_instalador():
+                return
+            perfis = _perfis()
+        if not perfis:
+            _log("Nenhum perfil .ovpn encontrado após a instalação. "
+                 "Coloque o perfil .ovpn na pasta installers\\ ao lado "
+                 "do AgenteBlue.exe.", "err")
+            d = _dir_openvpn()
+            if d:
+                for sub in ("config", "config-auto"):
+                    _log(f"  conteúdo de {d / sub}: "
+                         f"{list((d / sub).glob('*')) if (d / sub).is_dir() else '(não existe)'}", "muted")
             _progresso(100, "Perfil não encontrado", erro=True)
             return
         _log(f"Perfil encontrado: {', '.join(p.name for p in perfis)}", "ok")
@@ -721,20 +855,6 @@ def instalar(params: dict) -> None:
             _log(f"Perfil renomeado para \"{NOME_AMIGAVEL}\" — é esse nome que "
                  "aparece no OpenVPN GUI.", "ok")
         perfis = renomeados
-
-        # Para config-auto ANTES de gravar a credencial: o caminho absoluto da
-        # credencial vai escrito dentro do perfil, e mover depois deixaria a
-        # diretiva apontando para a pasta antiga.
-        _progresso(70, "Ativando a conexão automática…")
-        movidos = []
-        for perfil in perfis:
-            novo_perfil, aviso = mover_para_autostart(perfil)
-            if aviso:
-                _log(aviso, "warn")
-                _log("A VPN vai funcionar, mas só quando alguém conectar pelo "
-                     "OpenVPN GUI.", "warn")
-            movidos.append(novo_perfil)
-        perfis = movidos
 
         _progresso(80, "Gravando a credencial…")
         falhas = 0
@@ -838,6 +958,8 @@ def instalar(params: dict) -> None:
     except Exception as e:
         _log(f"Erro inesperado: {e}", "err")
         _progresso(100, "Falha na instalação da VPN", erro=True)
+    finally:
+        _lock.release()
 
 
 # ══════════════════════════════════════════════
@@ -861,7 +983,7 @@ def _codigos_produto() -> List[str]:
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
-            capture_output=True, text=True, timeout=60, creationflags=_NO_WINDOW)
+            capture_output=True, text=True, timeout=60, **_subproc_flags())
         achados = []
         for linha in (r.stdout or "").splitlines():
             codigo = linha.strip()
@@ -882,6 +1004,10 @@ def limpar(params: dict) -> None:
     pode sobrar é a senha do colaborador em disco — o cliente sem credencial é
     só um incômodo, a credencial órfã é um problema.
     """
+    if not _lock.acquire(blocking=False):
+        _log("Já há uma operação de VPN em andamento.", "warn")
+        _progresso(100, "Operação em andamento", erro=True)
+        return
     try:
         _progresso(10, "Apagando credenciais gravadas…")
         apagados = 0
@@ -897,7 +1023,14 @@ def limpar(params: dict) -> None:
         if not apagados:
             _log("Nenhuma credencial gravada encontrada", "muted")
 
-        _progresso(30, "Apagando perfis .ovpn…")
+        _progresso(20, "Removendo tarefa agendada da VPN…")
+        _remover_tarefa_vpn()
+        subprocess.run(["sc", "stop", "OpenVPNService"],
+                       capture_output=True, text=True, errors="ignore",
+                       timeout=30, **_subproc_flags())
+        _log("Tarefa agendada e serviço da VPN parados", "ok")
+
+        _progresso(35, "Apagando perfis .ovpn…")
         for perfil in _perfis():
             try:
                 perfil.unlink()
@@ -922,7 +1055,7 @@ def limpar(params: dict) -> None:
             try:
                 r = subprocess.run(
                     ["msiexec", "/x", codigo, "/qn", "/norestart"],
-                    capture_output=True, timeout=900, creationflags=_NO_WINDOW)
+                    capture_output=True, timeout=900, **_subproc_flags())
                 # 3010 = sucesso, mas pede reinício. Não é falha.
                 if r.returncode in (0, 3010):
                     _log(f"{codigo} desinstalado"
@@ -966,3 +1099,5 @@ def limpar(params: dict) -> None:
     except Exception as e:
         _log(f"Erro inesperado na limpeza: {e}", "err")
         _progresso(100, "Falha na limpeza da VPN", erro=True)
+    finally:
+        _lock.release()
